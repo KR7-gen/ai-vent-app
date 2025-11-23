@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Comment, BackgroundOption } from '@/types';
+import type { Comment, BackgroundOption, StampOption } from '@/types';
 
 export default function StreamPage() {
   const [isStreaming, setIsStreaming] = useState(false);
@@ -16,11 +16,20 @@ export default function StreamPage() {
   const [backgroundImage, setBackgroundImage] = useState('nature1');
   const [error, setError] = useState<string | null>(null);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
+  const [showStampPanel, setShowStampPanel] = useState(false);
   
   const router = useRouter();
   const streamStartTime = useRef<number | null>(null);
   const silenceTimer = useRef<number | null>(null);
   const commentsContainerRef = useRef<HTMLDivElement>(null);
+
+  // stream-configで選択した背景画像を読み込む
+  useEffect(() => {
+    const savedBackground = localStorage.getItem('selectedBackground');
+    if (savedBackground) {
+      setBackgroundImage(savedBackground);
+    }
+  }, []);
 
   // Mock audio level animation and silence detection
   useEffect(() => {
@@ -109,14 +118,15 @@ export default function StreamPage() {
     }
   }, [comments, isAutoScroll]);
 
-  const addComment = (text: string, special: boolean = false, isUserComment: boolean = false) => {
+  const addComment = (text: string, special: boolean = false, isUserComment: boolean = false, stampSrc?: string) => {
     const comment: Comment = {
       id: Date.now().toString() + Math.random(),
       text,
       special,
       timestamp: Date.now(),
       userName: isUserComment ? '視聴者' : 'Bot',
-      isUserComment
+      isUserComment,
+      stampSrc
     };
     
     setComments(prev => {
@@ -196,7 +206,14 @@ export default function StreamPage() {
     { id: 'minimal1', name: 'ホワイト', gradient: 'from-gray-100 to-white' },
     { id: 'minimal2', name: 'ダーク', gradient: 'from-gray-900 to-black' },
     { id: 'warm1', name: 'ウォーム', gradient: 'from-red-400 to-yellow-400' },
-    { id: 'cool1', name: 'クール', gradient: 'from-blue-400 to-cyan-400' }
+    { id: 'cool1', name: 'クール', gradient: 'from-blue-400 to-cyan-400' },
+    { id: 'tsubucafe', name: 'つぶカフェ', gradient: 'from-orange-800 to-amber-600' }
+  ];
+
+  const stampOptions: StampOption[] = [
+    { id: 'wafuwafu1', name: 'わふわふ1', src: '/backgrounds/StumpWafuwafu1.gif', type: 'gif' },
+    { id: 'wafuwafu2', name: 'わふわふ2', src: '/backgrounds/StumpWafuwafu2.png', type: 'image' },
+    { id: 'wafuwafu3', name: 'わふわふ3', src: '/backgrounds/StumpWafuwafu3.png', type: 'image' }
   ];
 
   const currentBg = backgroundOptions.find(bg => bg.id === backgroundImage) || backgroundOptions[0];
@@ -205,6 +222,14 @@ export default function StreamPage() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleStampSelect = (stampId: string) => {
+    const stampOption = stampOptions.find(s => s.id === stampId);
+    if (stampOption) {
+      addComment('', false, true, stampOption.src);
+      setShowStampPanel(false);
+    }
   };
 
   return (
@@ -252,7 +277,21 @@ export default function StreamPage() {
       <div className="relative flex-1" style={{ height: 'calc(100vh - 140px)' }}>
         {/* Background */}
         <div className="absolute inset-0 bg-gray-50">
-          <div className="absolute inset-0 bg-white/50" />
+          {backgroundImage === 'tsubucafe' ? (
+            <div 
+              className="absolute inset-0 bg-center bg-no-repeat"
+              style={{
+                backgroundImage: 'url(/backgrounds/TubuCafeBackground.jpg)',
+                backgroundSize: 'auto 100%',
+              }}
+            >
+              <div className="absolute inset-0 bg-white/30" />
+            </div>
+          ) : (
+            <div className={`absolute inset-0 bg-gradient-to-br ${currentBg.gradient}`}>
+              <div className="absolute inset-0 bg-white/50" />
+            </div>
+          )}
         </div>
 
         {/* Comments Panel - YouTube Live style */}
@@ -295,13 +334,23 @@ export default function StreamPage() {
                         {comment.userName}
                       </span>
                     </div>
-                    <p className={`text-sm mt-1 ${
-                      comment.special 
-                        ? 'text-yellow-300 font-bold text-base' 
-                        : 'text-white'
-                    }`}>
-                      {comment.text}
-                    </p>
+                    {comment.stampSrc ? (
+                      <div className="mt-1">
+                        <img
+                          src={comment.stampSrc}
+                          alt="stamp"
+                          className="w-16 h-16 object-contain"
+                        />
+                      </div>
+                    ) : (
+                      <p className={`text-sm mt-1 ${
+                        comment.special 
+                          ? 'text-yellow-300 font-bold text-base' 
+                          : 'text-white'
+                      }`}>
+                        {comment.text}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -367,6 +416,37 @@ export default function StreamPage() {
           >
             {isRecording ? '🔴 録画停止' : '⚫ 録画開始'}
           </button>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowStampPanel(!showStampPanel)}
+              className="px-4 py-2 rounded-lg transition bg-gray-300 hover:bg-gray-400 text-gray-800"
+            >
+              🎨 スタンプ
+            </button>
+            
+            {showStampPanel && (
+              <div className="absolute bottom-full left-0 mb-2 bg-white border border-gray-300 rounded-lg shadow-lg p-3 z-50">
+                <div className="text-sm font-semibold text-gray-900 mb-2">スタンプを選択</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {stampOptions.map((stamp) => (
+                    <button
+                      key={stamp.id}
+                      onClick={() => handleStampSelect(stamp.id)}
+                      className="p-2 rounded border-2 border-gray-300 hover:border-gray-400 transition"
+                    >
+                      <img
+                        src={stamp.src}
+                        alt={stamp.name}
+                        className="w-12 h-12 object-contain mx-auto"
+                      />
+                      <div className="text-xs text-gray-700 mt-1">{stamp.name}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         
         <div className="text-gray-600 text-sm">

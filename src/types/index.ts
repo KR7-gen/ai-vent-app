@@ -2,11 +2,12 @@
 
 export interface Comment {
   id: string;
-  text: string;
+  text?: string;
   special: boolean;
   timestamp: number;
   userName?: string;
   isUserComment?: boolean;
+  stampSrc?: string; // スタンプの場合の画像パス
 }
 
 export interface BackgroundOption {
@@ -55,4 +56,20 @@ export interface StreamState {
   lastAudioTime: number | null;
   error: string | null;
   showConfirmEnd: boolean;
+}
+
+export interface Stamp {
+  id: string;
+  src: string;
+  x: number; // パーセンテージ
+  y: number; // パーセンテージ
+  width?: number; // オプション: サイズ指定
+  height?: number; // オプション: サイズ指定
+}
+
+export interface StampOption {
+  id: string;
+  name: string;
+  src: string;
+  type: 'image' | 'gif';
 }

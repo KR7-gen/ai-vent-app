@@ -25,10 +25,13 @@ export default function StreamConfigPage() {
     { id: 'minimal1', name: 'ホワイト', preview: '⚪' },
     { id: 'minimal2', name: 'ダーク', preview: '⚫' },
     { id: 'warm1', name: 'ウォーム', preview: '🔥' },
-    { id: 'cool1', name: 'クール', preview: '❄️' }
+    { id: 'cool1', name: 'クール', preview: '❄️' },
+    { id: 'tsubucafe', name: 'つぶカフェ', preview: '☕' }
   ];
 
   const handleNext = () => {
+    // 選択した背景画像をlocalStorageに保存
+    localStorage.setItem('selectedBackground', backgroundImage);
     router.push('/warning');
   };
 
