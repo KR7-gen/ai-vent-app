@@ -1,8 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Comment, BackgroundOption, StampOption } from '@/types';
+import { useMediaStream } from '@/hooks/useMediaStream';
+import { useRecorder } from '@/hooks/useRecorder';
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 
 export default function StreamPage() {
   const [isStreaming, setIsStreaming] = useState(false);
@@ -10,7 +13,6 @@ export default function StreamPage() {
   const [silenceTime, setSilenceTime] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
   const [lastAudioTime, setLastAudioTime] = useState<number | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [backgroundImage, setBackgroundImage] = useState('nature1');
@@ -19,9 +21,39 @@ export default function StreamPage() {
   const [showStampPanel, setShowStampPanel] = useState(false);
   
   const router = useRouter();
+  const videoRef = useRef<HTMLVideoElement>(null);
   const streamStartTime = useRef<number | null>(null);
   const silenceTimer = useRef<number | null>(null);
   const commentsContainerRef = useRef<HTMLDivElement>(null);
+  const {
+    stream,
+    isLoading: isCameraLoading,
+    permissionGranted,
+    error: mediaError,
+    startCamera,
+    stopCamera,
+  } = useMediaStream();
+  const {
+    isRecording,
+    recordingTime,
+    error: recorderError,
+    startRecording,
+    stopRecording,
+  } = useRecorder(stream);
+  // ローカル相槌候補（音声認識の finalText をトリガーにのみ使用）
+  const localAizuchi = useMemo(() => ([
+    'うん', 'うんうん', 'そうなんだ', 'なるほど', 'わかる', 'それな', '確かに', 'へー',
+    'ほんとに？', 'すごいね', '大変だね', 'つらいね', 'よかったね', 'えらいね', 'そっか', 'ええ〜',
+    'わかります', 'そうですね', 'なんと', 'まじで', 'おつかれさま', 'がんばって', 'だよね',
+    'いいね', 'すてき', 'かわいい', 'かっこいい', 'やばい', 'しんどい', 'たいへん',
+    'おもしろい', 'びっくり', 'すばらしい', 'さすが', 'ありがとう', 'おかえり', 'いってらっしゃい',
+    'おはよう', 'こんにちは', 'こんばんは', 'お疲れ様', 'がんばれ', 'ファイト', '応援してる',
+    'そうそう', 'あるある', 'わかりみ', 'これこれ', 'ほんそれ', '激しく同意', '完全に理解',
+    'めっちゃわかる', 'すごくわかる', 'わかりすぎる', '共感', '同感', 'その通り', 'まさに',
+    'だよなー', 'そうなのよ', 'ほんまそれ', 'マジそれ', '超わかる', 'ガチわかる'
+  ]), []);
+  const lastAizuchiTimeRef = useRef(0);
+  const isRecognitionActiveRef = useRef(false);
 
   // stream-configで選択した背景画像を読み込む
   useEffect(() => {
@@ -70,46 +102,8 @@ export default function StreamPage() {
     }
   }, [isStreaming]);
 
-  // Auto comments (mock) - Multiple timers for more frequent comments
-  useEffect(() => {
-    if (isStreaming) {
-      const comments = [
-        'うん', 'うんうん', 'そうなんだ', 'なるほど', 'わかる', 'それな', '確かに', 'へー', 
-        'ほんとに？', 'すごいね', '大変だね', 'つらいね', 'よかったね', 'えらいね', 'そっか', 'ええ〜',
-        'わかります', 'そうですね', 'なんと', 'まじで', 'おつかれさま', 'がんばって', 'だよね',
-        'いいね', 'すてき', 'かわいい', 'かっこいい', 'やばい', 'しんどい', 'たいへん',
-        'おもしろい', 'びっくり', 'すばらしい', 'さすが', 'ありがとう', 'おかえり', 'いってらっしゃい',
-        'おはよう', 'こんにちは', 'こんばんは', 'お疲れ様', 'がんばれ', 'ファイト', '応援してる',
-        'そうそう', 'あるある', 'わかりみ', 'これこれ', 'ほんそれ', '激しく同意', '完全に理解',
-        'めっちゃわかる', 'すごくわかる', 'わかりすぎる', '共感', '同感', 'その通り', 'まさに',
-        'だよなー', 'そうなのよ', 'ほんまそれ', 'マジそれ', '超わかる', 'ガチわかる'
-      ];
-      
-      // Timer 1: Fast comments
-      const interval1 = setInterval(() => {
-        const randomComment = comments[Math.floor(Math.random() * comments.length)];
-        addComment(randomComment, false);
-      }, 300 + Math.random() * 200);
-      
-      // Timer 2: Medium speed comments
-      const interval2 = setInterval(() => {
-        const randomComment = comments[Math.floor(Math.random() * comments.length)];
-        addComment(randomComment, false);
-      }, 600 + Math.random() * 400);
-      
-      // Timer 3: Slower comments
-      const interval3 = setInterval(() => {
-        const randomComment = comments[Math.floor(Math.random() * comments.length)];
-        addComment(randomComment, false);
-      }, 800 + Math.random() * 600);
-      
-      return () => {
-        clearInterval(interval1);
-        clearInterval(interval2);
-        clearInterval(interval3);
-      };
-    }
-  }, [isStreaming]);
+  // 旧仕様の「録画開始でランダム相槌を流す」タイマーは廃止し、
+  // 相槌のトリガーは音声認識の finalText に一本化した。
 
   // Auto-scroll to bottom when new comments are added
   useEffect(() => {
@@ -117,6 +111,16 @@ export default function StreamPage() {
       commentsContainerRef.current.scrollTop = commentsContainerRef.current.scrollHeight;
     }
   }, [comments, isAutoScroll]);
+
+  // useMediaStream連携: record-testのvideoRef制御を本番UIにも流用し、streamの状態でプレビューを同期
+  useEffect(() => {
+    if (!videoRef.current) return;
+    if (stream) {
+      videoRef.current.srcObject = stream;
+    } else {
+      videoRef.current.srcObject = null;
+    }
+  }, [stream]);
 
   const addComment = (text: string, special: boolean = false, isUserComment: boolean = false, stampSrc?: string) => {
     const comment: Comment = {
@@ -136,6 +140,78 @@ export default function StreamPage() {
     });
   };
 
+  // ローカル相槌を1つランダムに返す（GPT は現段階では未使用）
+  const getRandomAizuchi = useCallback(() => {
+    if (!localAizuchi.length) return 'うん';
+    return localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
+  }, [localAizuchi]);
+
+  const handleUserUtterance = useCallback((finalText: string) => {
+    const trimmed = finalText.trim();
+    if (!trimmed) return;
+
+    // ① ユーザーの発話テキストをコメント欄に追加（視聴者コメント扱い）
+    addComment(trimmed, false, true);
+
+    // ② クールダウンを満たした場合のみ、ローカル相槌を1つ追加
+    const now = Date.now();
+    const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
+    const cooldownTime = 3000 + Math.random() * 2000;
+
+    if (timeSinceLastAizuchi < cooldownTime) {
+      return;
+    }
+
+    lastAizuchiTimeRef.current = now;
+    addComment(getRandomAizuchi(), false);
+  }, [addComment, getRandomAizuchi]);
+
+  const handleFinalText = useCallback((text: string) => {
+    console.log('STT final text:', text);
+    handleUserUtterance(text);
+  }, [handleUserUtterance]);
+
+  const {
+    recognizedText,
+    interimText,
+    error: speechError,
+    startRecognition,
+    stopRecognition,
+  } = useSpeechRecognition(handleFinalText);
+
+  const ensureRecognitionStarted = useCallback(() => {
+    if (isRecognitionActiveRef.current) return;
+    startRecognition();
+    isRecognitionActiveRef.current = true;
+    lastAizuchiTimeRef.current = Date.now();
+  }, [startRecognition]);
+
+  const ensureRecognitionStopped = useCallback(() => {
+    if (!isRecognitionActiveRef.current) return;
+    stopRecognition();
+    isRecognitionActiveRef.current = false;
+  }, [stopRecognition]);
+
+  useEffect(() => {
+    if (mediaError) {
+      setError(mediaError);
+      return;
+    }
+    if (recorderError) {
+      setError(recorderError);
+      return;
+    }
+    if (speechError) {
+      setError(speechError);
+    }
+  }, [mediaError, recorderError, speechError]);
+
+  useEffect(() => {
+    return () => {
+      ensureRecognitionStopped();
+    };
+  }, [ensureRecognitionStopped]);
+
   const handleScroll = () => {
     if (commentsContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = commentsContainerRef.current;
@@ -153,9 +229,13 @@ export default function StreamPage() {
   };
 
 
-  const handleStartStream = () => {
+  const handleStartStream = async () => {
     try {
       setError(null);
+      await startCamera();
+      ensureRecognitionStarted();
+      // 配信開始と同時に録画も開始する（useRecorder が WebM 保存と60分自動停止を担当）
+      startRecording();
       setIsStreaming(true);
       streamStartTime.current = Date.now();
       setLastAudioTime(Date.now());
@@ -174,6 +254,10 @@ export default function StreamPage() {
     try {
       setIsStreaming(false);
       setShowConfirmEnd(false);
+      ensureRecognitionStopped();
+       // 配信終了時に録画も確実に停止（停止時に WebM が自動ダウンロードされる）
+      stopRecording();
+      stopCamera();
       router.push('/login');
     } catch (err) {
       setError('配信の終了に失敗しました。');
@@ -184,7 +268,16 @@ export default function StreamPage() {
   const handleToggleRecording = () => {
     try {
       setError(null);
-      setIsRecording(!isRecording);
+      // フッターの「録画開始/停止」ボタンは useRecorder を直接トグル
+      if (!isRecording) {
+        const started = startRecording();
+        if (started) {
+          ensureRecognitionStarted();
+        }
+      } else {
+        stopRecording();
+        ensureRecognitionStopped();
+      }
     } catch (err) {
       setError('録画の切り替えに失敗しました。');
       console.error('Recording toggle error:', err);
@@ -257,6 +350,19 @@ export default function StreamPage() {
           <div className="text-gray-900">
             <span className="text-sm text-gray-600">沈黙: </span>
             <span className="font-mono">{silenceTime}秒</span>
+          </div>
+          <div className="text-gray-900">
+            <span className="text-sm text-gray-600">録画: </span>
+            <span className="font-mono text-sm">
+              {isRecording ? (
+                <span className="inline-flex items-center gap-1 text-red-600">
+                  <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
+                  REC {formatTime(recordingTime)}
+                </span>
+              ) : (
+                '停止中'
+              )}
+            </span>
           </div>
         </div>
         
@@ -380,6 +486,46 @@ export default function StreamPage() {
             </div>
           </div>
         )}
+
+        {/* useMediaStreamプレビュー: record-testのvideoRef戦略を本番UIへ移植して stream を即時描画 */}
+        <div className="absolute left-4 bottom-4 w-full max-w-md pointer-events-none">
+          <div className="bg-black/70 rounded-xl p-4 shadow-xl border border-white/10 pointer-events-auto">
+            <div className="flex items-center justify-between mb-3 text-white text-sm">
+              <span>カメラプレビュー</span>
+              <span className={permissionGranted ? 'text-green-300' : 'text-gray-300'}>
+                {permissionGranted ? '起動中' : '停止中'}
+              </span>
+            </div>
+            <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
+              {!stream && (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+                  カメラを起動してください
+                </div>
+              )}
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+            </div>
+            {(recognizedText || interimText) && (
+              <div className="mt-3 bg-black/60 rounded-lg p-3 text-white text-xs space-y-1">
+                <div className="flex items-center gap-2 text-gray-300 font-semibold">
+                  <span className="inline-block w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                  <span>音声認識</span>
+                </div>
+                {recognizedText && (
+                  <p className="text-sm text-white break-words">{recognizedText}</p>
+                )}
+                {interimText && (
+                  <p className="text-sm text-gray-400 italic break-words">{interimText}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Controls */}
@@ -390,6 +536,18 @@ export default function StreamPage() {
             className="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg transition"
           >
             配信終了
+          </button>
+
+          <button
+            onClick={permissionGranted ? stopCamera : startCamera}
+            disabled={isCameraLoading}
+            className={`px-4 py-2 rounded-lg transition ${
+              permissionGranted
+                ? 'bg-green-600 hover:bg-green-700 text-white'
+                : 'bg-blue-600 hover:bg-blue-700 text-white'
+            } ${isCameraLoading ? 'opacity-60 cursor-not-allowed' : ''}`}
+          >
+            {permissionGranted ? '📷 カメラ停止' : isCameraLoading ? '起動中...' : '📷 カメラ起動'}
           </button>
           
           <div className="relative">

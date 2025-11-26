@@ -1,88 +1,35 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-
-// Web Speech API type definitions
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
-}
-
-interface SpeechRecognitionResultList {
-  length: number;
-  item(index: number): SpeechRecognitionResult;
-  [index: number]: SpeechRecognitionResult;
-}
-
-interface SpeechRecognitionResult {
-  length: number;
-  item(index: number): SpeechRecognitionAlternative;
-  [index: number]: SpeechRecognitionAlternative;
-  isFinal: boolean;
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: any) => void) | null;
-  onend: (() => void) | null;
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition: new () => SpeechRecognition;
-    webkitSpeechRecognition: new () => SpeechRecognition;
-  }
-}
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useMediaStream } from '@/hooks/useMediaStream';
+import { useRecorder } from '@/hooks/useRecorder';
+import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 
 export default function RecordTestPage() {
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [permissionGranted, setPermissionGranted] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [recognizedText, setRecognizedText] = useState('');
-  const [interimText, setInterimText] = useState('');
   const [aiResponses, setAiResponses] = useState<Array<{ text: string; timestamp: number; isGpt: boolean }>>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const shouldRestartRecognitionRef = useRef(false);
   const lastAizuchiTimeRef = useRef<number>(0);
   const isGptProcessingRef = useRef(false);
   const accumulatedTextRef = useRef<string>('');
+  const wasRecordingRef = useRef(false);
 
   // Local aizuchi list
-  const localAizuchi = [
+  const localAizuchi = useMemo(() => ([
     'うん', 'うんうん', 'なるほど', 'そうなんだ', 'へー', 'ほー',
     'わかる', 'それな', '確かに', 'そっか', 'そうだね', 'いいね',
     'すごいね', 'なんと', 'マジで', 'ほんとに', 'わかるわかる',
     'そうそう', 'あるある', 'だよね', 'ですよね', 'おお',
     'ふむふむ', 'なーるほど', 'せやな', 'そうね', 'うむ',
-  ];
+  ]), []);
 
   // Get random local aizuchi
-  const getRandomAizuchi = () => {
+  const getRandomAizuchi = useCallback(() => {
     return localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
-  };
+  }, [localAizuchi]);
 
   // Check if should trigger GPT response
-  const shouldTriggerGptResponse = (text: string): boolean => {
+  const shouldTriggerGptResponse = useCallback((text: string): boolean => {
     // 10-20% chance
     if (Math.random() > 0.15) return false;
 
@@ -92,10 +39,10 @@ export default function RecordTestPage() {
     const hasEmotionalWord = emotionalKeywords.some(keyword => text.includes(keyword));
 
     return hasQuestionMark || hasEmotionalWord;
-  };
+  }, []);
 
   // Add AI response
-  const addAiResponse = (text: string, isGpt: boolean = false) => {
+  const addAiResponse = useCallback((text: string, isGpt: boolean = false) => {
     const response = {
       text,
       timestamp: Date.now(),
@@ -103,10 +50,10 @@ export default function RecordTestPage() {
     };
     setAiResponses(prev => [...prev.slice(-50), response]); // Keep last 50 responses
     console.log(`AI Response (${isGpt ? 'GPT' : 'Local'}):`, text);
-  };
+  }, []);
 
   // Call GPT API
-  const callGptApi = async (text: string) => {
+  const callGptApi = useCallback(async (text: string) => {
     if (isGptProcessingRef.current) {
       console.log('GPT request already in progress, skipping');
       return;
@@ -140,7 +87,7 @@ export default function RecordTestPage() {
     } finally {
       isGptProcessingRef.current = false;
     }
-  };
+  }, [addAiResponse, getRandomAizuchi]);
 
   // Handle recognized text and trigger responses
   const handleRecognizedText = useCallback((finalText: string) => {
@@ -184,106 +131,32 @@ export default function RecordTestPage() {
     }
   }, [shouldTriggerGptResponse, callGptApi, getRandomAizuchi, addAiResponse]);
 
-  // Initialize speech recognition
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const {
+    stream,
+    isLoading,
+    permissionGranted,
+    error: mediaError,
+    startCamera,
+    stopCamera,
+  } = useMediaStream();
 
-      if (SpeechRecognitionAPI) {
-        const recognition = new SpeechRecognitionAPI();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'ja-JP';
+  const {
+    isRecording,
+    recordingTime,
+    error: recorderError,
+    startRecording,
+    stopRecording,
+  } = useRecorder(stream);
 
-        recognition.onresult = (event: SpeechRecognitionEvent) => {
-          let interim = '';
-          let final = '';
+  const {
+    recognizedText,
+    interimText,
+    error: speechError,
+    startRecognition,
+    stopRecognition,
+  } = useSpeechRecognition(handleRecognizedText);
 
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              final += transcript;
-            } else {
-              interim += transcript;
-            }
-          }
-
-          if (final) {
-            console.log('Final recognition:', final);
-            setRecognizedText(prev => prev + final + ' ');
-            setInterimText('');
-            // Trigger AI response
-            handleRecognizedText(final);
-          } else {
-            setInterimText(interim);
-          }
-        };
-
-        recognition.onerror = (event: any) => {
-          console.error('Speech recognition error:', event.error);
-          if (event.error !== 'no-speech' && event.error !== 'aborted') {
-            setError(`音声認識エラー: ${event.error}`);
-          }
-        };
-
-        recognition.onend = () => {
-          console.log('Speech recognition ended');
-          // Auto-restart if recording is still active
-          if (shouldRestartRecognitionRef.current) {
-            console.log('Auto-restarting speech recognition');
-            try {
-              recognition.start();
-            } catch (err) {
-              console.error('Error restarting recognition:', err);
-            }
-          }
-        };
-
-        recognitionRef.current = recognition;
-        console.log('Speech recognition initialized');
-      } else {
-        console.warn('Speech recognition not supported');
-        setError('お使いのブラウザは音声認識に対応していません。Chromeをご利用ください。');
-      }
-    }
-  }, [handleRecognizedText]);
-
-  // Clean up stream and recording on unmount ONLY
-  useEffect(() => {
-    return () => {
-      // Stop speech recognition
-      if (recognitionRef.current) {
-        shouldRestartRecognitionRef.current = false;
-        try {
-          recognitionRef.current.stop();
-        } catch (err) {
-          console.error('Error stopping recognition on unmount:', err);
-        }
-      }
-
-      // Stop recording if active
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        console.log('Cleanup: Stopping recording on unmount');
-        mediaRecorderRef.current.stop();
-      }
-
-      // Clear timers
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-      if (autoStopTimerRef.current) {
-        clearTimeout(autoStopTimerRef.current);
-      }
-
-      // Stop stream
-      const currentStream = stream;
-      if (currentStream) {
-        console.log('Cleanup: Stopping stream on unmount');
-        currentStream.getTracks().forEach(track => track.stop());
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array - only run on mount/unmount
+  const error = mediaError || recorderError || speechError;
 
   // Set video element source when stream is available
   useEffect(() => {
@@ -308,263 +181,25 @@ export default function RecordTestPage() {
     }
   }, [stream, isRecording]);
 
-  // Handle beforeunload to save recording
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isRecording && mediaRecorderRef.current) {
-        // Stop recording to trigger save
-        mediaRecorderRef.current.stop();
-
-        // Show warning to user
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [isRecording]);
-
-  // Recording time counter
-  useEffect(() => {
-    if (isRecording) {
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-    } else {
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-        recordingTimerRef.current = null;
-      }
-      setRecordingTime(0);
+    if (!isRecording && wasRecordingRef.current) {
+      stopRecognition();
     }
-
-    return () => {
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-    };
-  }, [isRecording]);
-
-  const handleStartCamera = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Request camera and microphone access
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      setStream(mediaStream);
-      setPermissionGranted(true);
-    } catch (err) {
-      console.error('Error accessing media devices:', err);
-
-      if (err instanceof DOMException) {
-        switch (err.name) {
-          case 'NotAllowedError':
-            setError('カメラとマイクへのアクセスが拒否されました。ブラウザの設定を確認してください。');
-            break;
-          case 'NotFoundError':
-            setError('カメラまたはマイクが見つかりませんでした。デバイスが接続されているか確認してください。');
-            break;
-          case 'NotReadableError':
-            setError('カメラまたはマイクが別のアプリケーションで使用中の可能性があります。');
-            break;
-          default:
-            setError(`エラーが発生しました: ${err.message}`);
-        }
-      } else {
-        setError('予期しないエラーが発生しました。');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleStopCamera = () => {
-    // Stop recording first if active
-    if (mediaRecorderRef.current && isRecording) {
-      try {
-        if (mediaRecorderRef.current.state !== 'inactive') {
-          console.log('Stopping recording before camera shutdown');
-          mediaRecorderRef.current.stop();
-        }
-      } catch (err) {
-        console.error('Error stopping recording in handleStopCamera:', err);
-      }
-    }
-
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-      setPermissionGranted(false);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-    }
-
-    setIsRecording(false);
-  };
-
-  const getSupportedMimeType = (): string => {
-    const types = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm',
-    ];
-
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        return type;
-      }
-    }
-
-    return '';
-  };
-
-  const downloadRecording = (blob: Blob) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = url;
-    a.download = `recording_${new Date().toISOString().replace(/[:.]/g, '-')}.webm`;
-    document.body.appendChild(a);
-    a.click();
-
-    // Clean up
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-  };
+    wasRecordingRef.current = isRecording;
+  }, [isRecording, stopRecognition]);
 
   const handleStartRecording = () => {
-    if (!stream) {
-      setError('カメラが起動していません。先にカメラを起動してください。');
-      return;
-    }
-
-    try {
-      setError(null);
-      chunksRef.current = [];
-
-      const mimeType = getSupportedMimeType();
-      if (!mimeType) {
-        setError('お使いのブラウザは録画に対応していません。');
-        return;
-      }
-
-      console.log('Starting recording with mimeType:', mimeType);
-      console.log('Stream tracks:', stream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
-
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType,
-      });
-
-      // Handle data available event (called every 5 seconds)
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          console.log('Recording chunk received, size:', event.data.size);
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      // Handle stop event
-      mediaRecorder.onstop = () => {
-        console.log('Recording stopped, total chunks:', chunksRef.current.length);
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        downloadRecording(blob);
-        chunksRef.current = [];
-
-        // Clear auto-stop timer
-        if (autoStopTimerRef.current) {
-          clearTimeout(autoStopTimerRef.current);
-          autoStopTimerRef.current = null;
-        }
-      };
-
-      // Handle errors
-      mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorder error:', event);
-        setError('録画中にエラーが発生しました。');
-        setIsRecording(false);
-      };
-
-      // Start recording with 5-second chunks
-      mediaRecorder.start(5000);
-      mediaRecorderRef.current = mediaRecorder;
-      setIsRecording(true);
-      console.log('Recording started successfully');
-
-      // Start speech recognition
-      if (recognitionRef.current) {
-        try {
-          shouldRestartRecognitionRef.current = true;
-          setRecognizedText('');
-          setInterimText('');
-          setAiResponses([]);
-          accumulatedTextRef.current = '';
-          lastAizuchiTimeRef.current = Date.now();
-          recognitionRef.current.start();
-          console.log('Speech recognition started');
-        } catch (err) {
-          console.error('Error starting speech recognition:', err);
-        }
-      }
-
-      // Set 60-minute auto-stop timer
-      autoStopTimerRef.current = setTimeout(() => {
-        console.log('Auto-stop: 60 minutes reached');
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop();
-          setIsRecording(false);
-        }
-        // Stop speech recognition
-        if (recognitionRef.current) {
-          shouldRestartRecognitionRef.current = false;
-          recognitionRef.current.stop();
-        }
-      }, 60 * 60 * 1000);
-
-    } catch (err) {
-      console.error('Error starting recording:', err);
-      setError(`録画の開始に失敗しました。${err instanceof Error ? err.message : ''}`);
+    const started = startRecording();
+    if (started) {
+      setAiResponses([]);
+      accumulatedTextRef.current = '';
+      lastAizuchiTimeRef.current = Date.now();
+      startRecognition();
     }
   };
 
   const handleStopRecording = () => {
-    console.log('handleStopRecording called, isRecording:', isRecording, 'recorder state:', mediaRecorderRef.current?.state);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-        setIsRecording(false);
-        console.log('Recording stopped by user');
-      } catch (err) {
-        console.error('Error stopping recording:', err);
-        setError('録画の停止に失敗しました。');
-      }
-    }
-
-    // Stop speech recognition
-    if (recognitionRef.current) {
-      try {
-        shouldRestartRecognitionRef.current = false;
-        recognitionRef.current.stop();
-        console.log('Speech recognition stopped');
-      } catch (err) {
-        console.error('Error stopping speech recognition:', err);
-      }
-    }
+    stopRecording();
   };
 
   return (
@@ -711,7 +346,7 @@ export default function RecordTestPage() {
               <div className="space-y-3">
                 {!permissionGranted ? (
                   <button
-                    onClick={handleStartCamera}
+                    onClick={startCamera}
                     disabled={isLoading}
                     className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition duration-200 flex items-center justify-center"
                   >
@@ -732,7 +367,7 @@ export default function RecordTestPage() {
                 ) : (
                   <>
                     <button
-                      onClick={handleStopCamera}
+                      onClick={stopCamera}
                       disabled={isRecording}
                       className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-lg transition duration-200"
                     >
