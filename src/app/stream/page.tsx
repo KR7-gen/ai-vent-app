@@ -146,14 +146,8 @@ export default function StreamPage() {
     return localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
   }, [localAizuchi]);
 
-  const handleUserUtterance = useCallback((finalText: string) => {
-    const trimmed = finalText.trim();
-    if (!trimmed) return;
-
-    // ① ユーザーの発話テキストをコメント欄に追加（視聴者コメント扱い）
-    addComment(trimmed, false, true);
-
-    // ② クールダウンを満たした場合のみ、ローカル相槌を1つ追加
+  // 音声認識イベントを受けてローカル相槌を追加（transcript は破棄）
+  const handleRecognitionEvent = useCallback(() => {
     const now = Date.now();
     const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
     const cooldownTime = 3000 + Math.random() * 2000;
@@ -166,18 +160,11 @@ export default function StreamPage() {
     addComment(getRandomAizuchi(), false);
   }, [addComment, getRandomAizuchi]);
 
-  const handleFinalText = useCallback((text: string) => {
-    console.log('STT final text:', text);
-    handleUserUtterance(text);
-  }, [handleUserUtterance]);
-
   const {
-    recognizedText,
-    interimText,
     error: speechError,
     startRecognition,
     stopRecognition,
-  } = useSpeechRecognition(handleFinalText);
+  } = useSpeechRecognition(handleRecognitionEvent);
 
   const ensureRecognitionStarted = useCallback(() => {
     if (isRecognitionActiveRef.current) return;
@@ -510,20 +497,6 @@ export default function StreamPage() {
                 className="w-full h-full object-cover"
               />
             </div>
-            {(recognizedText || interimText) && (
-              <div className="mt-3 bg-black/60 rounded-lg p-3 text-white text-xs space-y-1">
-                <div className="flex items-center gap-2 text-gray-300 font-semibold">
-                  <span className="inline-block w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                  <span>音声認識</span>
-                </div>
-                {recognizedText && (
-                  <p className="text-sm text-white break-words">{recognizedText}</p>
-                )}
-                {interimText && (
-                  <p className="text-sm text-gray-400 italic break-words">{interimText}</p>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </div>

@@ -45,16 +45,12 @@ declare global {
 }
 
 interface UseSpeechRecognitionResult {
-  recognizedText: string;
-  interimText: string;
   error: string | null;
   startRecognition: () => void;
   stopRecognition: () => void;
 }
 
-export const useSpeechRecognition = (onFinalText: (text: string) => void): UseSpeechRecognitionResult => {
-  const [recognizedText, setRecognizedText] = useState('');
-  const [interimText, setInterimText] = useState('');
+export const useSpeechRecognition = (onRecognized?: () => void): UseSpeechRecognitionResult => {
   const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -69,8 +65,6 @@ export const useSpeechRecognition = (onFinalText: (text: string) => void): UseSp
 
     try {
       shouldRestartRef.current = true;
-      setRecognizedText('');
-      setInterimText('');
       recognition.start();
     } catch (err) {
       console.error('Error starting speech recognition:', err);
@@ -109,24 +103,14 @@ export const useSpeechRecognition = (onFinalText: (text: string) => void): UseSp
     recognition.lang = 'ja-JP';
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = '';
-      let final = '';
-
+      // 認識テキスト（transcript）は保持せず、final 判定のみをトリガーとして利用
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          final += transcript;
-        } else {
-          interim += transcript;
+          if (onRecognized) {
+            onRecognized();
+          }
+          break;
         }
-      }
-
-      if (final) {
-        setRecognizedText(prev => prev + final + ' ');
-        setInterimText('');
-        onFinalText(final);
-      } else {
-        setInterimText(interim);
       }
     };
 
@@ -149,7 +133,7 @@ export const useSpeechRecognition = (onFinalText: (text: string) => void): UseSp
 
     recognitionRef.current = recognition;
     setError(null);
-  }, [onFinalText]);
+  }, [onRecognized]);
 
   useEffect(() => {
     return () => {
@@ -165,8 +149,6 @@ export const useSpeechRecognition = (onFinalText: (text: string) => void): UseSp
   }, []);
 
   return {
-    recognizedText,
-    interimText,
     error,
     startRecognition,
     stopRecognition,

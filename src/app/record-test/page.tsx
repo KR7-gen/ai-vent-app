@@ -10,8 +10,6 @@ export default function RecordTestPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastAizuchiTimeRef = useRef<number>(0);
-  const isGptProcessingRef = useRef(false);
-  const accumulatedTextRef = useRef<string>('');
   const wasRecordingRef = useRef(false);
 
   // Local aizuchi list
@@ -28,19 +26,6 @@ export default function RecordTestPage() {
     return localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
   }, [localAizuchi]);
 
-  // Check if should trigger GPT response
-  const shouldTriggerGptResponse = useCallback((text: string): boolean => {
-    // 10-20% chance
-    if (Math.random() > 0.15) return false;
-
-    // Trigger if contains question mark or emotional keywords
-    const hasQuestionMark = text.includes('？') || text.includes('?');
-    const emotionalKeywords = ['辛い', 'つらい', '悲しい', '嬉しい', '困って', '悩んで', '心配', '不安', '怖い', '楽しい', '幸せ', '最悪', '最高'];
-    const hasEmotionalWord = emotionalKeywords.some(keyword => text.includes(keyword));
-
-    return hasQuestionMark || hasEmotionalWord;
-  }, []);
-
   // Add AI response
   const addAiResponse = useCallback((text: string, isGpt: boolean = false) => {
     const response = {
@@ -52,84 +37,21 @@ export default function RecordTestPage() {
     console.log(`AI Response (${isGpt ? 'GPT' : 'Local'}):`, text);
   }, []);
 
-  // Call GPT API
-  const callGptApi = useCallback(async (text: string) => {
-    if (isGptProcessingRef.current) {
-      console.log('GPT request already in progress, skipping');
-      return;
-    }
-
-    isGptProcessingRef.current = true;
-
-    try {
-      const response = await fetch('/api/ai-response', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) {
-        throw new Error('GPT API request failed');
-      }
-
-      const data = await response.json();
-      if (data.response) {
-        addAiResponse(data.response, true);
-      } else {
-        throw new Error('No response from GPT');
-      }
-    } catch (error) {
-      console.error('GPT API error:', error);
-      // Fallback to local aizuchi
-      addAiResponse(getRandomAizuchi(), false);
-    } finally {
-      isGptProcessingRef.current = false;
-    }
-  }, [addAiResponse, getRandomAizuchi]);
-
-  // Handle recognized text and trigger responses
-  const handleRecognizedText = useCallback((finalText: string) => {
-    console.log('=== handleRecognizedText called ===');
-    console.log('Final text:', finalText);
-
+  // Handle recognition events (transcripts are discarded; only trigger responses)
+  const handleRecognitionEvent = useCallback(() => {
     const now = Date.now();
     const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
 
-    console.log('Time since last aizuchi:', timeSinceLastAizuchi, 'ms');
-
     // Cooldown: 3-5 seconds
     const cooldownTime = 3000 + Math.random() * 2000;
-    console.log('Cooldown time:', cooldownTime, 'ms');
-
     if (timeSinceLastAizuchi < cooldownTime) {
-      console.log('❌ Cooldown active, skipping aizuchi');
       return;
     }
 
-    console.log('✅ Cooldown passed, generating response');
-
-    // Update last aizuchi time
     lastAizuchiTimeRef.current = now;
-
-    // Accumulate text for GPT context
-    accumulatedTextRef.current += finalText + ' ';
-
-    // Decide whether to use GPT or local aizuchi
-    const shouldUseGpt = shouldTriggerGptResponse(finalText);
-    console.log('Should use GPT:', shouldUseGpt);
-
-    if (shouldUseGpt) {
-      console.log('🤖 Triggering GPT response');
-      callGptApi(accumulatedTextRef.current.slice(-500)); // Use last 500 chars for context
-    } else {
-      // Local aizuchi (80-90%)
-      const aizuchi = getRandomAizuchi();
-      console.log('💬 Using local aizuchi:', aizuchi);
-      addAiResponse(aizuchi, false);
-    }
-  }, [shouldTriggerGptResponse, callGptApi, getRandomAizuchi, addAiResponse]);
+    const aizuchi = getRandomAizuchi();
+    addAiResponse(aizuchi, false);
+  }, [getRandomAizuchi, addAiResponse]);
 
   const {
     stream,
@@ -149,12 +71,10 @@ export default function RecordTestPage() {
   } = useRecorder(stream);
 
   const {
-    recognizedText,
-    interimText,
     error: speechError,
     startRecognition,
     stopRecognition,
-  } = useSpeechRecognition(handleRecognizedText);
+  } = useSpeechRecognition(handleRecognitionEvent);
 
   const error = mediaError || recorderError || speechError;
 
@@ -192,7 +112,6 @@ export default function RecordTestPage() {
     const started = startRecording();
     if (started) {
       setAiResponses([]);
-      accumulatedTextRef.current = '';
       lastAizuchiTimeRef.current = Date.now();
       startRecognition();
     }
@@ -265,32 +184,6 @@ export default function RecordTestPage() {
                 )}
               </div>
 
-              {/* Speech Recognition Display */}
-              {isRecording && (
-                <div className="mt-4 bg-gray-900 bg-opacity-50 rounded-lg p-4 min-h-[100px] max-h-[200px] overflow-y-auto">
-                  <h3 className="text-white text-sm font-semibold mb-2 flex items-center gap-2">
-                    <span className="inline-block w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                    音声認識
-                  </h3>
-                  <div className="space-y-2">
-                    {recognizedText && (
-                      <p className="text-white text-sm leading-relaxed">
-                        {recognizedText}
-                      </p>
-                    )}
-                    {interimText && (
-                      <p className="text-gray-400 text-sm italic">
-                        {interimText}
-                      </p>
-                    )}
-                    {!recognizedText && !interimText && (
-                      <p className="text-gray-500 text-sm">
-                        音声を認識中...
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
