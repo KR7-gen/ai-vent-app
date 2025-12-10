@@ -6,27 +6,23 @@ import type { DisplayMode, BackgroundPreview } from '@/types';
 
 export default function StreamConfigPage() {
   const [displayMode, setDisplayMode] = useState<DisplayMode>('background');
-  const [backgroundImage, setBackgroundImage] = useState('nature1');
+  const [backgroundImage, setBackgroundImage] = useState('tsubucafe1');
   const [autoSave, setAutoSave] = useState(true);
   const router = useRouter();
 
   const backgrounds: BackgroundPreview[] = [
-    { id: 'nature1', name: '森林', preview: '🌲' },
-    { id: 'nature2', name: '海辺', preview: '🌊' },
-    { id: 'nature3', name: '夜空', preview: '🌙' },
-    { id: 'nature4', name: '山岳', preview: '🏔️' },
-    { id: 'nature5', name: '桜', preview: '🌸' },
-    { id: 'room1', name: '書斎', preview: '📚' },
-    { id: 'room2', name: 'カフェ', preview: '☕' },
-    { id: 'room3', name: 'オフィス', preview: '🏢' },
-    { id: 'abstract1', name: 'グラデーション', preview: '🎨' },
-    { id: 'abstract2', name: 'オーロラ', preview: '🌌' },
-    { id: 'abstract3', name: 'サンセット', preview: '🌅' },
-    { id: 'minimal1', name: 'ホワイト', preview: '⚪' },
-    { id: 'minimal2', name: 'ダーク', preview: '⚫' },
-    { id: 'warm1', name: 'ウォーム', preview: '🔥' },
-    { id: 'cool1', name: 'クール', preview: '❄️' },
-    { id: 'tsubucafe', name: 'つぶカフェ', preview: '☕' }
+    { id: 'tsubucafe1', name: 'つぶカフェ', preview: '☕' },
+    { id: 'tsubucafe2', name: 'つぶカフェ２', preview: '☕' },
+    { id: 'tsubucafe3', name: 'つぶカフェ３', preview: '☕' },
+    { id: 'tsubucafe4', name: 'つぶカフェ４', preview: '☕' },
+    { id: 'tsubucafe5', name: 'つぶカフェ５', preview: '☕' },
+    { id: 'tsubucafe6', name: 'つぶカフェ６', preview: '☕' },
+    { id: 'tsubucafe7', name: 'つぶカフェ７', preview: '☕' },
+    { id: 'tsubucafe8', name: 'つぶカフェ８', preview: '☕' },
+    { id: 'tsubucafe9', name: 'つぶカフェ９', preview: '☕' },
+    { id: 'tsubucafe10', name: 'つぶカフェ１０', preview: '☕' },
+    { id: 'tsubucafe11', name: 'つぶカフェ１１', preview: '☕' },
+    { id: 'tsubucafe12', name: 'つぶカフェ１２', preview: '☕' }
   ];
 
   const handleNext = () => {
@@ -67,7 +63,7 @@ export default function StreamConfigPage() {
                 >
                   <div className="text-3xl sm:text-4xl mb-2">🖼️</div>
                   <div className="text-gray-900 font-medium text-sm sm:text-base">背景画像</div>
-                  <div className="text-gray-600 text-xs sm:text-sm">10種類から選択</div>
+                  <div className="text-gray-600 text-xs sm:text-sm">12種類から選択</div>
                 </button>
                 <button
                   onClick={() => setDisplayMode('camera')}

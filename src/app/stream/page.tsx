@@ -15,7 +15,7 @@ export default function StreamPage() {
   const [lastAudioTime, setLastAudioTime] = useState<number | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [isAutoScroll, setIsAutoScroll] = useState(true);
-  const [backgroundImage, setBackgroundImage] = useState('nature1');
+  const [backgroundImage, setBackgroundImage] = useState('tsubucafe1');
   const [error, setError] = useState<string | null>(null);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
   const [showStampPanel, setShowStampPanel] = useState(false);
@@ -272,22 +272,18 @@ export default function StreamPage() {
   };
 
   const backgroundOptions: BackgroundOption[] = [
-    { id: 'nature1', name: '森林', gradient: 'from-green-800 to-green-600' },
-    { id: 'nature2', name: '海辺', gradient: 'from-blue-800 to-blue-600' },
-    { id: 'nature3', name: '夜空', gradient: 'from-purple-900 to-indigo-800' },
-    { id: 'nature4', name: '山岳', gradient: 'from-gray-700 to-gray-500' },
-    { id: 'nature5', name: '桜', gradient: 'from-pink-400 to-pink-200' },
-    { id: 'room1', name: '書斎', gradient: 'from-amber-900 to-amber-700' },
-    { id: 'room2', name: 'カフェ', gradient: 'from-orange-800 to-amber-600' },
-    { id: 'room3', name: 'オフィス', gradient: 'from-slate-700 to-slate-500' },
-    { id: 'abstract1', name: 'グラデーション', gradient: 'from-pink-800 to-purple-600' },
-    { id: 'abstract2', name: 'オーロラ', gradient: 'from-green-400 to-blue-500' },
-    { id: 'abstract3', name: 'サンセット', gradient: 'from-orange-500 to-red-500' },
-    { id: 'minimal1', name: 'ホワイト', gradient: 'from-gray-100 to-white' },
-    { id: 'minimal2', name: 'ダーク', gradient: 'from-gray-900 to-black' },
-    { id: 'warm1', name: 'ウォーム', gradient: 'from-red-400 to-yellow-400' },
-    { id: 'cool1', name: 'クール', gradient: 'from-blue-400 to-cyan-400' },
-    { id: 'tsubucafe', name: 'つぶカフェ', gradient: 'from-orange-800 to-amber-600' }
+    { id: 'tsubucafe1', name: 'つぶカフェ', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe2', name: 'つぶカフェ２', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe3', name: 'つぶカフェ３', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe4', name: 'つぶカフェ４', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe5', name: 'つぶカフェ５', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe6', name: 'つぶカフェ６', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe7', name: 'つぶカフェ７', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe8', name: 'つぶカフェ８', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe9', name: 'つぶカフェ９', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe10', name: 'つぶカフェ１０', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe11', name: 'つぶカフェ１１', gradient: 'from-orange-800 to-amber-600' },
+    { id: 'tsubucafe12', name: 'つぶカフェ１２', gradient: 'from-orange-800 to-amber-600' }
   ];
 
   const stampOptions: StampOption[] = [
@@ -370,17 +366,26 @@ export default function StreamPage() {
       <div className="relative flex-1" style={{ height: 'calc(100vh - 140px)' }}>
         {/* Background */}
         <div className="absolute inset-0 bg-gray-50">
-          {backgroundImage === 'tsubucafe' ? (
-            <div 
-              className="absolute inset-0 bg-center bg-no-repeat"
-              style={{
-                backgroundImage: 'url(/backgrounds/TubuCafeBackground.jpg)',
-                backgroundSize: 'auto 100%',
-              }}
-            >
-              <div className="absolute inset-0 bg-white/30" />
-            </div>
-          ) : (
+          {backgroundImage.startsWith('tsubucafe') ? (() => {
+            // IDから番号を抽出（例: tsubucafe2 → 2）
+            const match = backgroundImage.match(/tsubucafe(\d+)/);
+            const number = match ? parseInt(match[1], 10) : 1;
+            // つぶカフェ１０は background (11).jpg になるように調整
+            const imageNumber = number === 10 ? 11 : number;
+            // URLエンコード: スペース %20, 括弧 ( %28, ) %29
+            const encodedFilename = `background%20%28${imageNumber}%29.jpg`;
+            return (
+              <div 
+                className="absolute inset-0 bg-center bg-no-repeat"
+                style={{
+                  backgroundImage: `url(/backgrounds/${encodedFilename})`,
+                  backgroundSize: 'auto 100%',
+                }}
+              >
+                <div className="absolute inset-0 bg-white/30" />
+              </div>
+            );
+          })() : (
             <div className={`absolute inset-0 bg-gradient-to-br ${currentBg.gradient}`}>
               <div className="absolute inset-0 bg-white/50" />
             </div>
@@ -474,31 +479,26 @@ export default function StreamPage() {
           </div>
         )}
 
-        {/* useMediaStreamプレビュー: record-testのvideoRef戦略を本番UIへ移植して stream を即時描画 */}
-        <div className="absolute left-4 bottom-4 w-full max-w-md pointer-events-none">
-          <div className="bg-black/70 rounded-xl p-4 shadow-xl border border-white/10 pointer-events-auto">
-            <div className="flex items-center justify-between mb-3 text-white text-sm">
-              <span>カメラプレビュー</span>
-              <span className={permissionGranted ? 'text-green-300' : 'text-gray-300'}>
-                {permissionGranted ? '起動中' : '停止中'}
-              </span>
-            </div>
-            <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
-              {!stream && (
-                <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
-                  カメラを起動してください
-                </div>
-              )}
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
+        {/* useMediaStreamプレビュー: カメラ起動時のみ表示 */}
+        {permissionGranted && (
+          <div className="absolute left-4 bottom-4 w-full max-w-md pointer-events-none">
+            <div className="bg-black/70 rounded-xl p-4 shadow-xl border border-white/10 pointer-events-auto">
+              <div className="flex items-center justify-between mb-3 text-white text-sm">
+                <span>カメラプレビュー</span>
+                <span className="text-green-300">起動中</span>
+              </div>
+              <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Controls */}
