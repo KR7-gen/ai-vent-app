@@ -24,9 +24,17 @@ export default function StreamPage() {
   const [showJoinRequest, setShowJoinRequest] = useState(false);
   const [joinRequestData, setJoinRequestData] = useState<{ roomId: string; requesterSocketId: string } | null>(null);
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
+  const [isWebRTCConnected, setIsWebRTCConnected] = useState(false);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [connectedUserCount, setConnectedUserCount] = useState(1); // 自分を含む
+  const [showUserLeftNotification, setShowUserLeftNotification] = useState(false);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const remoteSocketIdRef = useRef<string | null>(null);
   const streamStartTime = useRef<number | null>(null);
   const silenceTimer = useRef<number | null>(null);
   const commentsContainerRef = useRef<HTMLDivElement>(null);
@@ -113,11 +121,185 @@ export default function StreamPage() {
         setShowJoinRequest(true);
       });
 
+      // WebRTCシグナリングイベント
+      // 他のユーザーが参加したとき
+      socket.on('user-joined', (data: { socketId: string }) => {
+        console.log('[Stream] User joined:', data.socketId);
+        setConnectedUserCount(prev => {
+          const newCount = prev + 1;
+          console.log('[Stream] Connected user count:', newCount);
+          return newCount;
+        });
+      });
+
+      // 既存のユーザーがいることを通知されたとき
+      socket.on('existing-users', (data: { users: string[] }) => {
+        console.log('[Stream] Existing users:', data.users);
+        setConnectedUserCount(prev => {
+          const newCount = prev + data.users.length;
+          console.log('[Stream] Connected user count:', newCount);
+          return newCount;
+        });
+      });
+
+      // サーバーからoffer作成を促されたとき
+      socket.on('create-offer', async (data: { targetSocketId: string }) => {
+        console.log('[Stream] Server requested to create offer for:', data.targetSocketId);
+        console.log('[Stream] Current stream:', stream);
+        remoteSocketIdRef.current = data.targetSocketId;
+        
+        // 既存のPeerConnectionが閉じられている場合は新規作成
+        if (peerConnectionRef.current && 
+            (peerConnectionRef.current.connectionState === 'closed' || 
+             peerConnectionRef.current.signalingState === 'closed')) {
+          console.log('[Stream] Existing PeerConnection is closed, creating new one');
+          peerConnectionRef.current = null;
+        }
+        
+        if (!peerConnectionRef.current) {
+          if (stream) {
+            console.log('[Stream] Creating PeerConnection for offer');
+            createPeerConnection(stream);
+          } else {
+            console.error('[Stream] Cannot create offer: stream is not available');
+            return;
+          }
+        }
+
+        if (peerConnectionRef.current) {
+          // PeerConnectionの状態を確認
+          if (peerConnectionRef.current.signalingState === 'closed') {
+            console.error('[Stream] Cannot create offer: PeerConnection is closed');
+            return;
+          }
+          
+          try {
+            console.log('[Stream] Creating offer');
+            const offer = await peerConnectionRef.current.createOffer();
+            await peerConnectionRef.current.setLocalDescription(offer);
+            console.log('[Stream] Offer created, sending to:', data.targetSocketId);
+
+            socket.emit('webrtc-offer', {
+              offer: offer,
+              socketId: socket.id,
+              targetSocketId: data.targetSocketId,
+            });
+          } catch (err) {
+            console.error('[Stream] Error creating offer:', err);
+          }
+        } else {
+          console.error('[Stream] Cannot create offer: PeerConnection is null');
+        }
+      });
+
+      // WebRTC offer を受信
+      socket.on('webrtc-offer', async (data: { offer: RTCSessionDescriptionInit; socketId: string }) => {
+        console.log('[Stream] Offer received from:', data.socketId);
+        console.log('[Stream] Current stream:', stream);
+        remoteSocketIdRef.current = data.socketId;
+        if (!peerConnectionRef.current) {
+          if (stream) {
+            console.log('[Stream] Creating PeerConnection for answer');
+            createPeerConnection(stream);
+          } else {
+            console.error('[Stream] Cannot handle offer: stream is not available');
+            return;
+          }
+        }
+
+        if (!peerConnectionRef.current) {
+          console.error('[Stream] Cannot handle offer: PeerConnection is null');
+          return;
+        }
+
+        try {
+          console.log('[Stream] Setting remote description');
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.offer));
+          console.log('[Stream] Creating answer');
+          const answer = await peerConnectionRef.current.createAnswer();
+          await peerConnectionRef.current.setLocalDescription(answer);
+          console.log('[Stream] Answer created, sending to:', data.socketId);
+
+          socket.emit('webrtc-answer', {
+            answer: answer,
+            socketId: socket.id,
+            targetSocketId: data.socketId,
+          });
+        } catch (err) {
+          console.error('[Stream] Error handling offer:', err);
+        }
+      });
+
+      // WebRTC answer を受信
+      socket.on('webrtc-answer', async (data: { answer: RTCSessionDescriptionInit; socketId: string }) => {
+        console.log('[Stream] Answer received from:', data.socketId);
+        if (peerConnectionRef.current) {
+          try {
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+            setIsWebRTCConnected(true);
+          } catch (err) {
+            console.error('[Stream] Error handling answer:', err);
+          }
+        }
+      });
+
+      // ICE candidate を受信
+      socket.on('ice-candidate', async (data: { candidate: RTCIceCandidateInit; socketId: string }) => {
+        console.log('[Stream] ICE candidate received from:', data.socketId);
+        console.log('[Stream] ICE candidate:', data.candidate.candidate);
+        if (peerConnectionRef.current && data.candidate) {
+          try {
+            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+            console.log('[Stream] ICE candidate added successfully');
+          } catch (err) {
+            console.error('[Stream] Error adding ICE candidate:', err);
+          }
+        } else {
+          console.warn('[Stream] Cannot add ICE candidate: PeerConnection or candidate not available');
+        }
+      });
+
+      // ユーザーが退出したとき
+      socket.on('user-left', (data: { socketId: string }) => {
+        console.log('[Stream] User left:', data.socketId);
+        // 退出前の接続状態を確認（remoteStreamRefとisWebRTCConnectedの両方を確認）
+        const wasConnected = remoteStreamRef.current !== null || isWebRTCConnected;
+        console.log('[Stream] Was connected before leaving:', wasConnected);
+        console.log('[Stream] remoteStreamRef.current:', remoteStreamRef.current);
+        console.log('[Stream] isWebRTCConnected:', isWebRTCConnected);
+        if (peerConnectionRef.current) {
+          peerConnectionRef.current.close();
+          peerConnectionRef.current = null;
+        }
+        setIsWebRTCConnected(false);
+        setRemoteStream(null);
+        remoteStreamRef.current = null;
+        setConnectedUserCount(prev => {
+          const newCount = Math.max(1, prev - 1);
+          console.log('[Stream] Connected user count:', newCount);
+          return newCount;
+        });
+        // 退出通知を表示（WebRTC接続が確立されていた場合のみ）
+        if (wasConnected) {
+          console.log('[Stream] Showing user left notification');
+          setShowUserLeftNotification(true);
+          // 5秒後に自動的に非表示
+          setTimeout(() => {
+            setShowUserLeftNotification(false);
+          }, 5000);
+        } else {
+          console.log('[Stream] Not showing notification - was not connected');
+        }
+      });
+
       return () => {
+        if (peerConnectionRef.current) {
+          peerConnectionRef.current.close();
+        }
         socket.disconnect();
       };
     }
-  }, []);
+  }, [stream]);
 
   // Mock audio level animation and silence detection
   useEffect(() => {
@@ -168,11 +350,80 @@ export default function StreamPage() {
     }
   }, [comments, isAutoScroll]);
 
+  // リモートストリームをビデオ要素に設定
+  useEffect(() => {
+    remoteStreamRef.current = remoteStream; // refを更新
+    if (remoteStream && remoteVideoRef.current) {
+      console.log('[Stream] Setting remote stream to video element');
+      // 既存のストリームをクリア
+      if (remoteVideoRef.current.srcObject) {
+        const oldStream = remoteVideoRef.current.srcObject as MediaStream;
+        oldStream.getTracks().forEach(track => track.stop());
+      }
+      
+      remoteVideoRef.current.srcObject = remoteStream;
+      
+      // ビデオ要素のイベントを監視
+      remoteVideoRef.current.onloadedmetadata = () => {
+        console.log('[Stream] Remote video metadata loaded');
+        console.log('[Stream] Remote video dimensions:', remoteVideoRef.current?.videoWidth, 'x', remoteVideoRef.current?.videoHeight);
+      };
+      remoteVideoRef.current.oncanplay = () => {
+        console.log('[Stream] Remote video can play');
+      };
+      remoteVideoRef.current.onplay = () => {
+        console.log('[Stream] Remote video started playing');
+      };
+      remoteVideoRef.current.onerror = (e) => {
+        console.error('[Stream] Remote video error:', e);
+      };
+      
+      // ビデオを再生
+      remoteVideoRef.current.play().then(() => {
+        console.log('[Stream] Remote video play() succeeded');
+      }).catch(err => {
+        console.error('[Stream] Remote video play() failed:', err);
+      });
+    }
+  }, [remoteStream]);
+
   // useMediaStream連携: record-testのvideoRef制御を本番UIにも流用し、streamの状態でプレビューを同期
   useEffect(() => {
     if (!videoRef.current) return;
     if (stream) {
       videoRef.current.srcObject = stream;
+      console.log('[Stream] Stream updated, tracks:', stream.getTracks());
+      // カメラが起動したら、既存のPeerConnectionがあればローカルストリームを更新
+      if (peerConnectionRef.current) {
+        console.log('[Stream] Updating PeerConnection with new stream');
+        // 既存のトラックを新しいトラックで置き換える
+        const senders = peerConnectionRef.current.getSenders();
+        const tracks = stream.getTracks();
+        
+        senders.forEach((sender, index) => {
+          if (sender.track && tracks[index]) {
+            // 同じ種類のトラックを置き換え
+            if (sender.track.kind === tracks[index].kind) {
+              console.log('[Stream] Replacing track:', tracks[index].kind, tracks[index].id);
+              sender.replaceTrack(tracks[index]).catch(err => {
+                console.error('[Stream] Error replacing track:', err);
+              });
+            }
+          } else if (tracks[index]) {
+            // 新しいトラックを追加
+            console.log('[Stream] Adding new track:', tracks[index].kind, tracks[index].id);
+            peerConnectionRef.current?.addTrack(tracks[index], stream);
+          }
+        });
+        
+        // 新しいトラックが既存のsenderより多い場合、残りを追加
+        if (tracks.length > senders.length) {
+          tracks.slice(senders.length).forEach((track) => {
+            console.log('[Stream] Adding additional track:', track.kind, track.id);
+            peerConnectionRef.current?.addTrack(track, stream);
+          });
+        }
+      }
     } else {
       videoRef.current.srcObject = null;
     }
@@ -398,6 +649,123 @@ export default function StreamPage() {
     }
   };
 
+  // WebRTC PeerConnectionを作成
+  const createPeerConnection = (localStream: MediaStream) => {
+    const configuration: RTCConfiguration = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    };
+
+    const peerConnection = new RTCPeerConnection(configuration);
+    peerConnectionRef.current = peerConnection;
+
+    // ローカルストリームのトラックを追加
+    localStream.getTracks().forEach((track) => {
+      peerConnection.addTrack(track, localStream);
+    });
+
+    // リモートストリームの処理
+    peerConnection.ontrack = (event) => {
+      console.log('[Stream] ===== Remote track received =====');
+      console.log('[Stream] Event:', event);
+      console.log('[Stream] Remote streams:', event.streams);
+      console.log('[Stream] Remote track:', event.track);
+      console.log('[Stream] Track kind:', event.track.kind);
+      console.log('[Stream] Track enabled:', event.track.enabled);
+      console.log('[Stream] Track readyState:', event.track.readyState);
+      
+      if (event.streams && event.streams.length > 0) {
+        const newRemoteStream = event.streams[0];
+        console.log('[Stream] Remote stream ID:', newRemoteStream.id);
+        console.log('[Stream] Remote stream tracks:', newRemoteStream.getTracks());
+        console.log('[Stream] Remote stream active:', newRemoteStream.active);
+        
+        // 状態を更新して再レンダリングを促す
+        setRemoteStream(newRemoteStream);
+        setIsWebRTCConnected(true);
+        console.log('[Stream] Remote stream state updated, will be set to video element in useEffect');
+        console.log('[Stream] Remote stream state updated');
+      } else {
+        console.warn('[Stream] No streams in track event');
+      }
+    };
+
+    // ICE candidate の処理
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('[Stream] ICE candidate generated:', event.candidate.candidate);
+        if (socketRef.current && remoteSocketIdRef.current) {
+          socketRef.current.emit('ice-candidate', {
+            candidate: event.candidate.toJSON(),
+            socketId: socketRef.current.id,
+            targetSocketId: remoteSocketIdRef.current,
+          });
+          console.log('[Stream] ICE candidate sent to:', remoteSocketIdRef.current);
+        } else {
+          console.warn('[Stream] Cannot send ICE candidate: socket or remoteSocketId not available');
+        }
+      } else {
+        console.log('[Stream] ICE candidate gathering completed');
+      }
+    };
+
+    // 接続状態の監視
+    peerConnection.onconnectionstatechange = () => {
+      console.log('[Stream] ===== Connection state changed =====');
+      console.log('[Stream] Connection state:', peerConnection.connectionState);
+      console.log('[Stream] Ice connection state:', peerConnection.iceConnectionState);
+      console.log('[Stream] Ice gathering state:', peerConnection.iceGatheringState);
+      console.log('[Stream] Signaling state:', peerConnection.signalingState);
+      
+      if (peerConnection.connectionState === 'connected') {
+        setIsWebRTCConnected(true);
+        console.log('[Stream] WebRTC connection established!');
+      } else if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+        setIsWebRTCConnected(false);
+        console.log('[Stream] WebRTC connection lost');
+      }
+    };
+
+    // ICE接続状態の監視
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log('[Stream] ICE connection state:', peerConnection.iceConnectionState);
+      if (peerConnection.iceConnectionState === 'connected' || peerConnection.iceConnectionState === 'completed') {
+        console.log('[Stream] ICE connection established!');
+      } else if (peerConnection.iceConnectionState === 'failed') {
+        console.error('[Stream] ICE connection failed');
+      }
+    };
+  };
+
+  // WebRTC接続を開始
+  const handleStartWebRTC = () => {
+    if (!socketRef.current) {
+      setError('Socket接続が確立されていません');
+      return;
+    }
+
+    if (!stream) {
+      setError('カメラが起動されていません');
+      return;
+    }
+
+    console.log('[Stream] Starting WebRTC connection, stream tracks:', stream.getTracks());
+
+    // PeerConnection を作成（まだ作成されていない場合）
+    if (!peerConnectionRef.current) {
+      console.log('[Stream] Creating new PeerConnection');
+      createPeerConnection(stream);
+    } else {
+      console.log('[Stream] PeerConnection already exists');
+    }
+
+    // シグナリングサーバーに参加を通知
+    console.log('[Stream] Emitting join event');
+    socketRef.current.emit('join');
+  };
+
   const handleApproveJoinRequest = () => {
     if (socketRef.current && joinRequestData) {
       socketRef.current.emit('approve-join-request', {
@@ -510,7 +878,8 @@ export default function StreamPage() {
           )}
         </div>
 
-        {/* Comments Panel - YouTube Live style */}
+        {/* Comments Panel - YouTube Live style (2人以上で非表示) */}
+        {connectedUserCount < 2 && (
         <div className="absolute right-4 top-4 bottom-20 w-80 pointer-events-auto">
           <div className="h-full bg-black bg-opacity-80 rounded-lg flex flex-col">
             {/* Comment Header */}
@@ -575,9 +944,10 @@ export default function StreamPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Center Message */}
-        {!isStreaming && (
+        {!isStreaming && connectedUserCount < 2 && (
           <div className="absolute inset-0 flex items-center justify-center">
             <button
               onClick={handleStartStream}
@@ -602,7 +972,7 @@ export default function StreamPage() {
           <div className="absolute left-4 bottom-4 w-full max-w-md pointer-events-none">
             <div className="bg-black/70 rounded-xl p-4 shadow-xl border border-white/10 pointer-events-auto">
               <div className="flex items-center justify-between mb-3 text-white text-sm">
-                <span>カメラプレビュー</span>
+                <span>自分のカメラ</span>
                 <span className="text-green-300">起動中</span>
               </div>
               <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
@@ -612,6 +982,39 @@ export default function StreamPage() {
                   playsInline
                   muted
                   className="w-full h-full object-cover"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* リモートビデオ: WebRTC接続時のみ表示 */}
+        {remoteStream && (
+          <div className="absolute right-4 bottom-4 w-full max-w-md pointer-events-none">
+            <div className="bg-black/70 rounded-xl p-4 shadow-xl border border-white/10 pointer-events-auto">
+              <div className="flex items-center justify-between mb-3 text-white text-sm">
+                <span>相手のカメラ</span>
+                <span className="text-green-300">接続中</span>
+              </div>
+              <div className="relative bg-black rounded-lg overflow-hidden" style={{ aspectRatio: '16/9' }}>
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  muted={false}
+                  className="w-full h-full object-cover"
+                  onLoadedMetadata={() => {
+                    console.log('[Stream] Remote video metadata loaded in UI');
+                  }}
+                  onCanPlay={() => {
+                    console.log('[Stream] Remote video can play in UI');
+                  }}
+                  onPlay={() => {
+                    console.log('[Stream] Remote video playing in UI');
+                  }}
+                  onError={(e) => {
+                    console.error('[Stream] Remote video error in UI:', e);
+                  }}
                 />
               </div>
             </div>
@@ -640,6 +1043,15 @@ export default function StreamPage() {
           >
             {permissionGranted ? '📷 カメラ停止' : isCameraLoading ? '起動中...' : '📷 カメラ起動'}
           </button>
+
+          {permissionGranted && !isWebRTCConnected && (
+            <button
+              onClick={handleStartWebRTC}
+              className="px-4 py-2 rounded-lg transition bg-purple-600 hover:bg-purple-700 text-white"
+            >
+              📹 ビデオ通話開始
+            </button>
+          )}
           
           <div className="relative">
             <select
@@ -723,6 +1135,16 @@ export default function StreamPage() {
                 終了する
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Left Notification */}
+      {showUserLeftNotification && (
+        <div className="fixed top-4 right-4 bg-yellow-500 text-white px-6 py-4 rounded-lg shadow-lg z-50 animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">⚠️</span>
+            <span className="font-medium">相手のユーザーが退出しました</span>
           </div>
         </div>
       )}
