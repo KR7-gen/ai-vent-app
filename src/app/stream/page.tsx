@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import io from 'socket.io-client';
 import type { Comment, BackgroundOption, StampOption } from '@/types';
 import { useMediaStream } from '@/hooks/useMediaStream';
 import { useRecorder } from '@/hooks/useRecorder';
@@ -19,6 +20,10 @@ export default function StreamPage() {
   const [error, setError] = useState<string | null>(null);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
   const [showStampPanel, setShowStampPanel] = useState(false);
+  const [roomId, setRoomId] = useState<string>('');
+  const [showJoinRequest, setShowJoinRequest] = useState(false);
+  const [joinRequestData, setJoinRequestData] = useState<{ roomId: string; requesterSocketId: string } | null>(null);
+  const socketRef = useRef<ReturnType<typeof io> | null>(null);
   
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -60,6 +65,57 @@ export default function StreamPage() {
     const savedBackground = localStorage.getItem('selectedBackground');
     if (savedBackground) {
       setBackgroundImage(savedBackground);
+    }
+  }, []);
+
+  // ルームIDを読み込む
+  useEffect(() => {
+    const savedRoomId = localStorage.getItem('roomId');
+    if (savedRoomId) {
+      setRoomId(savedRoomId);
+      // ページに到達した時点でルームIDをサーバーに登録（部屋を作成した時点で参加可能にする）
+      console.log('[Stream] Registering room ID on mount:', savedRoomId);
+      fetch('/api/rooms/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ roomId: savedRoomId }),
+      })
+      .then(response => {
+        console.log('[Stream] Registration response status:', response.status);
+        return response.json();
+      })
+      .then(data => {
+        console.log('[Stream] Registration response data:', data);
+      })
+      .catch(err => {
+        console.error('[Stream] Room registration error on mount:', err);
+      });
+
+      // Socket.IO接続を確立してルームホストとして登録
+      const socket = io('http://localhost:3000', {
+        transports: ['websocket', 'polling'],
+      });
+      socketRef.current = socket;
+
+      socket.on('connect', () => {
+        console.log('[Stream] Socket connected:', socket.id);
+        // ルームホストとして登録
+        socket.emit('register-room-host', { roomId: savedRoomId });
+        console.log('[Stream] Registered as room host for:', savedRoomId);
+      });
+
+      // 入室リクエストを受信
+      socket.on('join-request', (data: { roomId: string; requesterSocketId: string }) => {
+        console.log('[Stream] Join request received:', data);
+        setJoinRequestData(data);
+        setShowJoinRequest(true);
+      });
+
+      return () => {
+        socket.disconnect();
+      };
     }
   }, []);
 
@@ -196,8 +252,20 @@ export default function StreamPage() {
   useEffect(() => {
     return () => {
       ensureRecognitionStopped();
+      // ページを離れる時にルームIDを削除
+      if (roomId && isStreaming) {
+        fetch('/api/rooms/unregister', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ roomId }),
+        }).catch(err => {
+          console.error('Room unregistration error on cleanup:', err);
+        });
+      }
     };
-  }, [ensureRecognitionStopped]);
+  }, [ensureRecognitionStopped, roomId, isStreaming]);
 
   const handleScroll = () => {
     if (commentsContainerRef.current) {
@@ -223,6 +291,9 @@ export default function StreamPage() {
       ensureRecognitionStarted();
       // 配信開始と同時に録画も開始する（useRecorder が WebM 保存と60分自動停止を担当）
       startRecording();
+      
+      // ルームIDは既にページマウント時に登録されているので、ここでは登録しない
+      
       setIsStreaming(true);
       streamStartTime.current = Date.now();
       setLastAudioTime(Date.now());
@@ -237,7 +308,7 @@ export default function StreamPage() {
     setShowConfirmEnd(true);
   };
 
-  const confirmEndStream = () => {
+  const confirmEndStream = async () => {
     try {
       setIsStreaming(false);
       setShowConfirmEnd(false);
@@ -245,6 +316,25 @@ export default function StreamPage() {
        // 配信終了時に録画も確実に停止（停止時に WebM が自動ダウンロードされる）
       stopRecording();
       stopCamera();
+      
+      // ルームIDをサーバーから削除
+      if (roomId) {
+        try {
+          const response = await fetch('/api/rooms/unregister', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ roomId }),
+          });
+          if (!response.ok) {
+            console.error('Failed to unregister room ID');
+          }
+        } catch (err) {
+          console.error('Room unregistration error:', err);
+        }
+      }
+      
       router.push('/login');
     } catch (err) {
       setError('配信の終了に失敗しました。');
@@ -308,6 +398,28 @@ export default function StreamPage() {
     }
   };
 
+  const handleApproveJoinRequest = () => {
+    if (socketRef.current && joinRequestData) {
+      socketRef.current.emit('approve-join-request', {
+        roomId: joinRequestData.roomId,
+        requesterSocketId: joinRequestData.requesterSocketId,
+      });
+      setShowJoinRequest(false);
+      setJoinRequestData(null);
+    }
+  };
+
+  const handleDenyJoinRequest = () => {
+    if (socketRef.current && joinRequestData) {
+      socketRef.current.emit('deny-join-request', {
+        roomId: joinRequestData.roomId,
+        requesterSocketId: joinRequestData.requesterSocketId,
+      });
+      setShowJoinRequest(false);
+      setJoinRequestData(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black">
       {/* Error Display */}
@@ -326,6 +438,12 @@ export default function StreamPage() {
       {/* Header */}
       <div className="bg-gray-100 border-b border-gray-200 p-4 flex justify-between items-center">
         <div className="flex items-center gap-6">
+          {roomId && (
+            <div className="text-gray-900">
+              <span className="text-sm text-gray-600">ルームID: </span>
+              <span className="font-mono text-lg font-semibold">{roomId}</span>
+            </div>
+          )}
           <div className="text-gray-900">
             <span className="text-sm text-gray-600">経過時間: </span>
             <span className="font-mono text-lg">{formatTime(streamTime)}</span>
@@ -603,6 +721,34 @@ export default function StreamPage() {
                 className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg transition"
               >
                 終了する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Join Request Dialog */}
+      {showJoinRequest && joinRequestData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-sm mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">入室リクエスト</h3>
+            <p className="text-gray-600 mb-4">
+              ルームID: <span className="font-mono">{joinRequestData.roomId}</span>
+              <br />
+              ユーザーが入室を希望しています。入室を許可しますか？
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleDenyJoinRequest}
+                className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-lg transition"
+              >
+                拒否
+              </button>
+              <button
+                onClick={handleApproveJoinRequest}
+                className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg transition"
+              >
+                許可
               </button>
             </div>
           </div>

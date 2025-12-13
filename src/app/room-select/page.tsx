@@ -1,12 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import io from 'socket.io-client';
 import type { RoomMode } from '@/types';
 
 export default function RoomSelectPage() {
   const [mode, setMode] = useState<RoomMode>('create');
   const [roomId, setRoomId] = useState('');
+  const [error, setError] = useState<string>('');
+  const [isChecking, setIsChecking] = useState(false);
+  const [isWaitingForApproval, setIsWaitingForApproval] = useState(false);
+  const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const router = useRouter();
 
   const generateRoomId = () => {
@@ -15,8 +20,107 @@ export default function RoomSelectPage() {
 
   const [generatedRoomId] = useState(() => generateRoomId());
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // コンポーネントのクリーンアップ時にSocket接続を切断
+  useEffect(() => {
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+
+    const finalRoomId = mode === 'create' ? (roomId || generatedRoomId) : roomId;
+    
+    if (!finalRoomId) {
+      setError('ルームIDを入力してください');
+      return;
+    }
+
+    // 「部屋に参加」の場合はルームIDの存在確認
+    if (mode === 'join') {
+      setIsChecking(true);
+      try {
+        console.log('[RoomSelect] Checking room ID:', finalRoomId);
+        const response = await fetch('/api/rooms/check', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ roomId: finalRoomId }),
+        });
+
+        console.log('[RoomSelect] Response status:', response.status);
+        const data = await response.json();
+        console.log('[RoomSelect] Response data:', data);
+        console.log('[RoomSelect] Room exists?', data.exists);
+
+        if (!response.ok) {
+          setError('ルームIDの確認に失敗しました。再度お試しください。');
+          setIsChecking(false);
+          return;
+        }
+
+        if (!data.exists) {
+          setError('このルームIDは存在しないか、配信が終了しています。');
+          setIsChecking(false);
+          return;
+        }
+
+        // ルームIDが存在する場合、入室リクエストを送信
+        setIsChecking(false);
+        setIsWaitingForApproval(true);
+        
+        // Socket.IO接続を確立
+        const socket = io('http://localhost:3000', {
+          transports: ['websocket', 'polling'],
+        });
+        socketRef.current = socket;
+
+        socket.on('connect', () => {
+          console.log('[RoomSelect] Socket connected:', socket.id);
+          // 入室リクエストを送信
+          socket.emit('request-join-room', { roomId: finalRoomId });
+        });
+
+        // 入室承認を受信
+        socket.on('join-request-approved', (data: { roomId: string }) => {
+          console.log('[RoomSelect] Join request approved:', data);
+          setIsWaitingForApproval(false);
+          socket.disconnect();
+          
+          // ルームIDをlocalStorageに保存
+          if (finalRoomId) {
+            localStorage.setItem('roomId', finalRoomId);
+          }
+          router.push('/warning');
+        });
+
+        // 入室拒否を受信
+        socket.on('join-request-denied', (data: { roomId: string; reason: string }) => {
+          console.log('[RoomSelect] Join request denied:', data);
+          setIsWaitingForApproval(false);
+          setError(data.reason || '入室が拒否されました');
+          socket.disconnect();
+        });
+
+        return; // 入室リクエスト送信後はここで終了
+      } catch (err) {
+        console.error('[RoomSelect] Room check error:', err);
+        setError('ルームIDの確認に失敗しました。再度お試しください。');
+        setIsChecking(false);
+        return;
+      }
+    }
+
+    // 「部屋を作る」の場合は通常のフロー
+    // ルームIDをlocalStorageに保存
+    if (finalRoomId) {
+      localStorage.setItem('roomId', finalRoomId);
+    }
     router.push('/stream-config');
   };
 
@@ -99,11 +203,29 @@ export default function RoomSelectPage() {
             </div>
           )}
 
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
+              {error}
+            </div>
+          )}
+
+          {isWaitingForApproval && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+              <p className="text-blue-700 text-sm">入室リクエストを送信しました。承認をお待ちください...</p>
+            </div>
+          )}
+
           <button
             type="submit"
-            className="w-full bg-gray-900 hover:bg-gray-800 text-white font-medium py-2 sm:py-3 px-4 rounded-lg transition duration-200 text-sm sm:text-base"
+            disabled={isChecking || isWaitingForApproval}
+            className={`w-full font-medium py-2 sm:py-3 px-4 rounded-lg transition duration-200 text-sm sm:text-base ${
+              isChecking || isWaitingForApproval
+                ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
+                : 'bg-gray-900 hover:bg-gray-800 text-white'
+            }`}
           >
-            {mode === 'create' ? '部屋を作成' : '部屋に参加'}
+            {isChecking ? '確認中...' : isWaitingForApproval ? '承認待ち...' : mode === 'create' ? '部屋を作成' : '部屋に参加'}
           </button>
         </form>
 
