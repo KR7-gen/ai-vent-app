@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import io from 'socket.io-client';
-import type { Comment, BackgroundOption, StampOption } from '@/types';
+import type { Comment, BackgroundOption, StampOption, Aizuchi, AizuchiTag } from '@/types';
 import { useMediaStream } from '@/hooks/useMediaStream';
 import { useRecorder } from '@/hooks/useRecorder';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
@@ -53,23 +53,37 @@ export default function StreamPage() {
     startRecording,
     stopRecording,
   } = useRecorder(stream);
-  // ローカル相槌候補（音声認識の finalText をトリガーにのみ使用）
-  const localAizuchi = useMemo(() => ([
-    'うん', 'うんうん', 'そうなんだ', 'なるほど', 'わかる', 'それな', '確かに', 'へー',
-    'ほんとに？', 'すごいね', '大変だね', 'つらいね', 'よかったね', 'えらいね', 'そっか', 'ええ〜',
-    'わかります', 'そうですね', 'なんと', 'まじで', 'おつかれさま', 'がんばって', 'だよね',
-    'いいね', 'すてき', 'かわいい', 'かっこいい', 'やばい', 'しんどい', 'たいへん',
-    'おもしろい', 'びっくり', 'すばらしい', 'さすが', 'ありがとう', 'おかえり', 'いってらっしゃい',
-    'おはよう', 'こんにちは', 'こんばんは', 'お疲れ様', 'がんばれ', 'ファイト', '応援してる',
-    'そうそう', 'あるある', 'わかりみ', 'これこれ', 'ほんそれ', '激しく同意', '完全に理解',
-    'めっちゃわかる', 'すごくわかる', 'わかりすぎる', '共感', '同感', 'その通り', 'まさに',
-    'だよなー', 'そうなのよ', 'ほんまそれ', 'マジそれ', '超わかる', 'ガチわかる'
-  ]), []);
+  // ローカル相槌候補（タグ付き）
+  const localAizuchi: Aizuchi[] = useMemo(() => [
+    // ack
+    { text: 'うん', tags: ['ack'] },
+    { text: 'なるほど', tags: ['ack'] },
+    { text: 'そうなんだ', tags: ['ack'] },
+    { text: 'そっか', tags: ['ack'] },
+    // agree
+    { text: 'わかる', tags: ['agree'] },
+    { text: 'それな', tags: ['agree'] },
+    { text: '確かに', tags: ['agree'] },
+    // surprise
+    { text: 'へー', tags: ['surprise'] },
+    { text: 'ええ〜', tags: ['surprise'] },
+    { text: 'ほんとに？', tags: ['surprise'] },
+    // praise
+    { text: 'すごいね', tags: ['praise'] },
+    // empathy
+    { text: '大変だね', tags: ['empathy'] },
+    // prompt
+    { text: 'それで？', tags: ['prompt'] },
+    { text: 'どうなったの？', tags: ['prompt'] },
+    { text: 'もっと聞かせて', tags: ['prompt'] },
+  ], []);
   const lastAizuchiTimeRef = useRef(0);
   const isRecognitionActiveRef = useRef(false);
   const bufferRef = useRef<string>(''); // 音声認識テキストを蓄積
-  const lastGptAt = useRef<number>(0); // 最後にGPTを呼んだ時刻
+  const lastGptAt = useRef<number>(Date.now() - 30000); // 最後にGPTを呼んだ時刻（初期値は30秒前）
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null); // 無音検知用タイマー
+  const lastAizuchiRef = useRef<string | null>(null); // 直前の相槌テキスト
+  const lastPromptRef = useRef<boolean>(false); // 直前がpromptかどうか
 
   // stream-configで選択した背景画像を読み込む
   useEffect(() => {
@@ -459,11 +473,81 @@ export default function StreamPage() {
     });
   };
 
-  // ローカル相槌を1つランダムに返す（GPT は現段階では未使用）
-  const getRandomAizuchi = useCallback(() => {
-    if (!localAizuchi.length) return 'うん';
-    return localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
-  }, [localAizuchi]);
+  // 発話テキストからタグを推定
+  const detectAizuchiTag = useCallback((userText: string): AizuchiTag => {
+    // 1. 質問・続きが気になる系（ユーザーが質問している）
+    // ? ？ を含む、または なんで|なぜ|どうして|どう を含む → ack
+    if (/[?？]/.test(userText) || /なんで|なぜ|どうして|どう/.test(userText)) {
+      return 'ack';
+    }
+
+    // 2. ネガティブ系
+    // つら|しんど|きつ|無理|最悪|疲れ|だる|嫌 を含む → empathy
+    if (/つら|しんど|きつ|無理|最悪|疲れ|だる|嫌/.test(userText)) {
+      return 'empathy';
+    }
+
+    // 3. ポジティブ/達成系
+    // できた|成功|達成|勝った|褒め|嬉し|よかった を含む → praise
+    if (/できた|成功|達成|勝った|褒め|嬉し|よかった/.test(userText)) {
+      return 'praise';
+    }
+
+    // 4. 驚き・強調系
+    // まじ|マジ|やば|えっ|びっくり|本当 を含む → surprise
+    if (/まじ|マジ|やば|えっ|びっくり|本当/.test(userText)) {
+      return 'surprise';
+    }
+
+    // 5. 共感しやすい語（同意が合いそう）
+    // わかる|同じ|あるある を含む → agree
+    if (/わかる|同じ|あるある/.test(userText)) {
+      return 'agree';
+    }
+
+    // 6. その他 → ack
+    return 'ack';
+  }, []);
+
+  // コンテキストに応じた相槌を選択
+  const pickAizuchiByContext = useCallback((userText: string): string => {
+    // 1. baseTag = detectAizuchiTag(userText)
+    const baseTag = detectAizuchiTag(userText);
+
+    // 2. prompt を候補に含めるか判定（userText短い、かつ直前promptじゃない場合のみ）
+    const shouldIncludePrompt = userText.length < 25 && !lastPromptRef.current;
+
+    // 3. 候補抽出
+    // 基本は baseTag の相槌候補
+    let candidates = localAizuchi.filter(a => a.tags.includes(baseTag));
+
+    // ただし shouldIncludePrompt の条件を満たす場合は prompt 候補も追加（混ぜる）
+    if (shouldIncludePrompt) {
+      const promptCandidates = localAizuchi.filter(a => a.tags.includes('prompt'));
+      candidates = [...candidates, ...promptCandidates];
+    }
+
+    // 候補が0件なら全候補から選ぶ
+    if (candidates.length === 0) {
+      candidates = localAizuchi;
+    }
+
+    // 4. 直前相槌を除外してランダム抽選
+    const filteredCandidates = candidates.filter(
+      a => a.text !== lastAizuchiRef.current
+    );
+    const finalCandidates = filteredCandidates.length > 0 ? filteredCandidates : candidates;
+
+    // 5. 選ばれた相槌テキストを返す
+    const selected = finalCandidates[Math.floor(Math.random() * finalCandidates.length)];
+
+    // lastAizuchiRef.current を更新
+    lastAizuchiRef.current = selected.text;
+    // lastPromptRef.current を更新
+    lastPromptRef.current = selected.tags.includes('prompt');
+
+    return selected.text;
+  }, [localAizuchi, detectAizuchiTag]);
 
   // 無音検知でflushBuffer()を呼ぶ
   const flushBuffer = useCallback(async () => {
@@ -483,23 +567,37 @@ export default function StreamPage() {
 
       if (timeSinceLastAizuchi >= cooldownTime) {
         lastAizuchiTimeRef.current = now;
-        addComment(getRandomAizuchi(), false, false, undefined, 'assistant', 'aizuchi');
+        const aizuchiText = pickAizuchiByContext(text);
+        addComment(aizuchiText, false, false, undefined, 'assistant', 'aizuchi');
       }
       return;
     }
 
-    // 相槌 85% / GPT 15% を抽選
-    const shouldUseGpt = Math.random() < 0.15;
+    // 相槌 80-90% / GPT 10-20% を抽選（1-2割でGPT）
+    // 20%の固定確率でGPTを選ぶ（1-2割の範囲内、より確実に選ばれるように）
+    const gptProbability = 0.20; // 20%の固定確率
+    const randomValue = Math.random();
+    const shouldUseGpt = randomValue < gptProbability;
 
     // GPTは lastGptAt から30秒以内なら相槌にフォールバック
     const now = Date.now();
     const timeSinceLastGpt = now - lastGptAt.current;
     const gptCooldown = 30000; // 30秒
 
+    console.log('[flushBuffer] ===== GPT Decision =====');
+    console.log('[flushBuffer] Random value:', randomValue.toFixed(3), 'gptProbability:', gptProbability.toFixed(3));
+    console.log('[flushBuffer] shouldUseGpt:', shouldUseGpt, 'timeSinceLastGpt:', timeSinceLastGpt, 'ms', 'gptCooldown:', gptCooldown);
+    console.log('[flushBuffer] Condition check:', 'shouldUseGpt:', shouldUseGpt, 'timeSinceLastGpt >= gptCooldown:', timeSinceLastGpt >= gptCooldown);
+
     if (shouldUseGpt && timeSinceLastGpt >= gptCooldown) {
       // GPT呼び出し
+      console.log('[flushBuffer] ===== Calling GPT API =====');
+      console.log('[flushBuffer] Text length:', text.length, 'Text preview:', text.substring(0, 50) + '...');
+      console.log('[flushBuffer] RoomId:', roomId);
       try {
+        // lastGptAtを先に更新（重複呼び出しを防ぐ）
         lastGptAt.current = now;
+        console.log('[flushBuffer] Fetching /api/ai-reply...');
         const response = await fetch('/api/ai-reply', {
           method: 'POST',
           headers: {
@@ -511,30 +609,51 @@ export default function StreamPage() {
           }),
         });
 
+        console.log('[flushBuffer] GPT API response received, status:', response.status);
+
         if (response.ok) {
           const data = await response.json();
+          console.log('[flushBuffer] GPT API response data:', data);
           if (data.replyText) {
+            console.log('[flushBuffer] Adding GPT response:', data.replyText);
             addComment(data.replyText, false, false, undefined, 'assistant', 'gpt');
             return;
+          } else {
+            console.warn('[flushBuffer] GPT API response has no replyText');
           }
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('[flushBuffer] GPT API error:', response.status, errorData);
         }
         // エラー時は相槌にフォールバック
-        console.error('GPT API error:', response.status);
       } catch (error) {
-        console.error('GPT API error:', error);
+        console.error('[flushBuffer] GPT API exception:', error);
         // エラー時は相槌にフォールバック
+      }
+    } else {
+      if (!shouldUseGpt) {
+        console.log('[flushBuffer] GPT not selected (random chance)');
+      } else {
+        console.log('[flushBuffer] GPT on cooldown (timeSinceLastGpt:', timeSinceLastGpt, 'ms)');
       }
     }
 
     // 相槌を返す（GPTを使わない場合、またはGPTエラー時）
+    console.log('[flushBuffer] ===== Using Aizuchi =====');
     const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
     const cooldownTime = 3000 + Math.random() * 2000;
 
+    console.log('[flushBuffer] timeSinceLastAizuchi:', timeSinceLastAizuchi, 'ms', 'cooldownTime:', cooldownTime, 'ms');
+
     if (timeSinceLastAizuchi >= cooldownTime) {
       lastAizuchiTimeRef.current = now;
-      addComment(getRandomAizuchi(), false, false, undefined, 'assistant', 'aizuchi');
+      const aizuchiText = pickAizuchiByContext(text);
+      console.log('[flushBuffer] Adding aizuchi:', aizuchiText);
+      addComment(aizuchiText, false, false, undefined, 'assistant', 'aizuchi');
+    } else {
+      console.log('[flushBuffer] Aizuchi on cooldown, skipping response');
     }
-  }, [roomId, addComment, getRandomAizuchi]);
+  }, [roomId, addComment, pickAizuchiByContext]);
 
   // 音声認識イベントを受けてtranscriptをbufferRefに蓄積
   const handleRecognitionEvent = useCallback((transcript: string) => {
@@ -631,8 +750,7 @@ export default function StreamPage() {
       setError(null);
       await startCamera();
       ensureRecognitionStarted();
-      // 配信開始と同時に録画も開始する（useRecorder が WebM 保存と60分自動停止を担当）
-      startRecording();
+      // 録画は「録画開始」ボタンから手動で開始する
       
       // ルームIDは既にページマウント時に登録されているので、ここでは登録しない
       

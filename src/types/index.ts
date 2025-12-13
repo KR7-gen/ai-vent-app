@@ -75,3 +75,10 @@ export interface StampOption {
   src: string;
   type: 'image' | 'gif';
 }
+
+export type AizuchiTag = 'ack' | 'agree' | 'praise' | 'empathy' | 'surprise' | 'prompt';
+
+export interface Aizuchi {
+  text: string;
+  tags: AizuchiTag[];
+}
