@@ -50,7 +50,9 @@ interface UseSpeechRecognitionResult {
   stopRecognition: () => void;
 }
 
-export const useSpeechRecognition = (onRecognized?: () => void): UseSpeechRecognitionResult => {
+export const useSpeechRecognition = (
+  onRecognized?: (transcript: string) => void
+): UseSpeechRecognitionResult => {
   const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -103,11 +105,12 @@ export const useSpeechRecognition = (onRecognized?: () => void): UseSpeechRecogn
     recognition.lang = 'ja-JP';
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      // 認識テキスト（transcript）は保持せず、final 判定のみをトリガーとして利用
+      // final 判定の時にtranscriptを取得してコールバックに渡す
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
-          if (onRecognized) {
-            onRecognized();
+          const transcript = event.results[i][0].transcript;
+          if (onRecognized && transcript) {
+            onRecognized(transcript);
           }
           break;
         }

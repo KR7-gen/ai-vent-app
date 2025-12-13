@@ -67,6 +67,9 @@ export default function StreamPage() {
   ]), []);
   const lastAizuchiTimeRef = useRef(0);
   const isRecognitionActiveRef = useRef(false);
+  const bufferRef = useRef<string>(''); // 音声認識テキストを蓄積
+  const lastGptAt = useRef<number>(0); // 最後にGPTを呼んだ時刻
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null); // 無音検知用タイマー
 
   // stream-configで選択した背景画像を読み込む
   useEffect(() => {
@@ -429,7 +432,14 @@ export default function StreamPage() {
     }
   }, [stream]);
 
-  const addComment = (text: string, special: boolean = false, isUserComment: boolean = false, stampSrc?: string) => {
+  const addComment = (
+    text: string, 
+    special: boolean = false, 
+    isUserComment: boolean = false, 
+    stampSrc?: string,
+    role?: 'assistant' | 'user',
+    type?: 'gpt' | 'aizuchi'
+  ) => {
     const comment: Comment = {
       id: Date.now().toString() + Math.random(),
       text,
@@ -437,7 +447,9 @@ export default function StreamPage() {
       timestamp: Date.now(),
       userName: isUserComment ? '視聴者' : 'Bot',
       isUserComment,
-      stampSrc
+      stampSrc,
+      role: role || (isUserComment ? 'user' : 'assistant'),
+      type
     };
     
     setComments(prev => {
@@ -453,19 +465,94 @@ export default function StreamPage() {
     return localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
   }, [localAizuchi]);
 
-  // 音声認識イベントを受けてローカル相槌を追加（transcript は破棄）
-  const handleRecognitionEvent = useCallback(() => {
-    const now = Date.now();
-    const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
-    const cooldownTime = 3000 + Math.random() * 2000;
-
-    if (timeSinceLastAizuchi < cooldownTime) {
+  // 無音検知でflushBuffer()を呼ぶ
+  const flushBuffer = useCallback(async () => {
+    const text = bufferRef.current.trim();
+    if (!text) {
       return;
     }
 
-    lastAizuchiTimeRef.current = now;
-    addComment(getRandomAizuchi(), false);
-  }, [addComment, getRandomAizuchi]);
+    // バッファをクリア
+    bufferRef.current = '';
+
+    // 20文字未満の場合はGPTを使わず相槌にする
+    if (text.length < 20) {
+      const now = Date.now();
+      const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
+      const cooldownTime = 3000 + Math.random() * 2000;
+
+      if (timeSinceLastAizuchi >= cooldownTime) {
+        lastAizuchiTimeRef.current = now;
+        addComment(getRandomAizuchi(), false, false, undefined, 'assistant', 'aizuchi');
+      }
+      return;
+    }
+
+    // 相槌 85% / GPT 15% を抽選
+    const shouldUseGpt = Math.random() < 0.15;
+
+    // GPTは lastGptAt から30秒以内なら相槌にフォールバック
+    const now = Date.now();
+    const timeSinceLastGpt = now - lastGptAt.current;
+    const gptCooldown = 30000; // 30秒
+
+    if (shouldUseGpt && timeSinceLastGpt >= gptCooldown) {
+      // GPT呼び出し
+      try {
+        lastGptAt.current = now;
+        const response = await fetch('/api/ai-reply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId: roomId,
+            userText: text,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.replyText) {
+            addComment(data.replyText, false, false, undefined, 'assistant', 'gpt');
+            return;
+          }
+        }
+        // エラー時は相槌にフォールバック
+        console.error('GPT API error:', response.status);
+      } catch (error) {
+        console.error('GPT API error:', error);
+        // エラー時は相槌にフォールバック
+      }
+    }
+
+    // 相槌を返す（GPTを使わない場合、またはGPTエラー時）
+    const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
+    const cooldownTime = 3000 + Math.random() * 2000;
+
+    if (timeSinceLastAizuchi >= cooldownTime) {
+      lastAizuchiTimeRef.current = now;
+      addComment(getRandomAizuchi(), false, false, undefined, 'assistant', 'aizuchi');
+    }
+  }, [roomId, addComment, getRandomAizuchi]);
+
+  // 音声認識イベントを受けてtranscriptをbufferRefに蓄積
+  const handleRecognitionEvent = useCallback((transcript: string) => {
+    // transcriptをバッファに追加
+    if (transcript.trim()) {
+      bufferRef.current += (bufferRef.current ? ' ' : '') + transcript.trim();
+    }
+
+    // 無音タイマーをリセット
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+    }
+
+    // 1000ms後にflushBuffer()を呼ぶ
+    silenceTimerRef.current = setTimeout(() => {
+      flushBuffer();
+    }, 1000);
+  }, [flushBuffer]);
 
   const {
     error: speechError,
@@ -503,6 +590,10 @@ export default function StreamPage() {
   useEffect(() => {
     return () => {
       ensureRecognitionStopped();
+      // 無音タイマーをクリア
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
       // ページを離れる時にルームIDを削除
       if (roomId && isStreaming) {
         fetch('/api/rooms/unregister', {
@@ -910,13 +1001,21 @@ export default function StreamPage() {
                   <div className={`p-2 rounded ${
                     comment.isUserComment 
                       ? 'bg-blue-600 bg-opacity-20 border-l-2 border-blue-400' 
+                      : comment.type === 'gpt'
+                      ? 'bg-purple-600 bg-opacity-20 border-l-2 border-purple-400'
                       : 'bg-gray-600 bg-opacity-20'
                   }`}>
                     <div className="flex items-start gap-2">
                       <span className={`text-xs font-medium ${
-                        comment.isUserComment ? 'text-blue-300' : 'text-gray-300'
+                        comment.isUserComment ? 'text-blue-300' : comment.type === 'gpt' ? 'text-purple-300' : 'text-gray-300'
                       }`}>
                         {comment.userName}
+                        {comment.type === 'gpt' && (
+                          <span className="ml-1 text-[10px] bg-purple-500 px-1 rounded">GPT</span>
+                        )}
+                        {comment.type === 'aizuchi' && (
+                          <span className="ml-1 text-[10px] bg-gray-500 px-1 rounded">相槌</span>
+                        )}
                       </span>
                     </div>
                     {comment.stampSrc ? (
@@ -931,6 +1030,8 @@ export default function StreamPage() {
                       <p className={`text-sm mt-1 ${
                         comment.special 
                           ? 'text-yellow-300 font-bold text-base' 
+                          : comment.type === 'gpt'
+                          ? 'text-purple-200'
                           : 'text-white'
                       }`}>
                         {comment.text}

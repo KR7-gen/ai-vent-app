@@ -8,6 +8,8 @@ export interface Comment {
   userName?: string;
   isUserComment?: boolean;
   stampSrc?: string; // スタンプの場合の画像パス
+  role?: 'assistant' | 'user'; // アシスタント（Bot）かユーザーか
+  type?: 'gpt' | 'aizuchi'; // GPT応答か相槌か
 }
 
 export interface BackgroundOption {
