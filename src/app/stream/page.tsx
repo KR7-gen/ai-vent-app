@@ -57,21 +57,73 @@ export default function StreamPage() {
   const localAizuchi: Aizuchi[] = useMemo(() => [
     // ack
     { text: 'うん', tags: ['ack'] },
+    { text: 'うんうん', tags: ['ack'] },
     { text: 'なるほど', tags: ['ack'] },
     { text: 'そうなんだ', tags: ['ack'] },
     { text: 'そっか', tags: ['ack'] },
+    { text: 'おかえり', tags: ['ack'] },
+    { text: 'いってらっしゃい', tags: ['ack'] },
+    { text: 'おはよう', tags: ['ack'] },
+    { text: 'こんにちは', tags: ['ack'] },
+    { text: 'こんばんは', tags: ['ack'] },
     // agree
     { text: 'わかる', tags: ['agree'] },
+    { text: 'わかります', tags: ['agree'] },
     { text: 'それな', tags: ['agree'] },
     { text: '確かに', tags: ['agree'] },
+    { text: 'そうですね', tags: ['agree'] },
+    { text: 'だよね', tags: ['agree'] },
+    { text: 'そうそう', tags: ['agree'] },
+    { text: 'あるある', tags: ['agree'] },
+    { text: 'わかりみ', tags: ['agree'] },
+    { text: 'これこれ', tags: ['agree'] },
+    { text: 'ほんそれ', tags: ['agree'] },
+    { text: '激しく同意', tags: ['agree'] },
+    { text: '完全に理解', tags: ['agree'] },
+    { text: 'めっちゃわかる', tags: ['agree'] },
+    { text: 'すごくわかる', tags: ['agree'] },
+    { text: 'わかりすぎる', tags: ['agree'] },
+    { text: '共感', tags: ['agree'] },
+    { text: '同感', tags: ['agree'] },
+    { text: 'その通り', tags: ['agree'] },
+    { text: 'まさに', tags: ['agree'] },
+    { text: 'だよなー', tags: ['agree'] },
+    { text: 'そうなのよ', tags: ['agree'] },
+    { text: 'ほんまそれ', tags: ['agree'] },
+    { text: 'マジそれ', tags: ['agree'] },
+    { text: '超わかる', tags: ['agree'] },
+    { text: 'ガチわかる', tags: ['agree'] },
     // surprise
     { text: 'へー', tags: ['surprise'] },
     { text: 'ええ〜', tags: ['surprise'] },
     { text: 'ほんとに？', tags: ['surprise'] },
+    { text: 'なんと', tags: ['surprise'] },
+    { text: 'まじで', tags: ['surprise'] },
+    { text: 'やばい', tags: ['surprise'] },
+    { text: 'びっくり', tags: ['surprise'] },
     // praise
     { text: 'すごいね', tags: ['praise'] },
+    { text: 'よかったね', tags: ['praise'] },
+    { text: 'えらいね', tags: ['praise'] },
+    { text: 'いいね', tags: ['praise'] },
+    { text: 'すてき', tags: ['praise'] },
+    { text: 'かわいい', tags: ['praise'] },
+    { text: 'かっこいい', tags: ['praise'] },
+    { text: 'おもしろい', tags: ['praise'] },
+    { text: 'すばらしい', tags: ['praise'] },
+    { text: 'さすが', tags: ['praise'] },
+    { text: 'ありがとう', tags: ['praise'] },
+    { text: 'おつかれさま', tags: ['praise'] },
+    { text: 'お疲れ様', tags: ['praise'] },
+    { text: 'がんばって', tags: ['praise'] },
+    { text: 'がんばれ', tags: ['praise'] },
+    { text: 'ファイト', tags: ['praise'] },
+    { text: '応援してる', tags: ['praise'] },
     // empathy
     { text: '大変だね', tags: ['empathy'] },
+    { text: 'つらいね', tags: ['empathy'] },
+    { text: 'しんどい', tags: ['empathy'] },
+    { text: 'たいへん', tags: ['empathy'] },
     // prompt
     { text: 'それで？', tags: ['prompt'] },
     { text: 'どうなったの？', tags: ['prompt'] },
@@ -85,6 +137,7 @@ export default function StreamPage() {
   const lastAizuchiRef = useRef<string | null>(null); // 直前の相槌テキスト
   const lastPromptRef = useRef<boolean>(false); // 直前がpromptかどうか
   const lastRecognitionEventTimeRef = useRef<number>(Date.now()); // 最後の音声認識イベントの時刻
+  const randomAizuchiTimerRef = useRef<NodeJS.Timeout | null>(null); // ランダム相槌用タイマー（音声認識とは独立）
 
   // stream-configで選択した背景画像を読み込む
   useEffect(() => {
@@ -358,9 +411,6 @@ export default function StreamPage() {
     }
   }, [isStreaming]);
 
-  // 旧仕様の「録画開始でランダム相槌を流す」タイマーは廃止し、
-  // 相槌のトリガーは音声認識の finalText に一本化した。
-
   // Auto-scroll to bottom when new comments are added
   useEffect(() => {
     if (isAutoScroll && commentsContainerRef.current) {
@@ -582,6 +632,55 @@ export default function StreamPage() {
 
     return selected.text;
   }, [localAizuchi, detectAizuchiTag]);
+
+  // 完全ランダム相槌選択（タグ・文脈・感情判定なし、音声認識・GPTとは完全独立）
+  const pickRandomAizuchi = useCallback((): string => {
+    // 完全ランダムで相槌を選択（タグ判定なし）
+    const selected = localAizuchi[Math.floor(Math.random() * localAizuchi.length)];
+    return selected.text;
+  }, [localAizuchi]);
+
+  // ランダム相槌タイマー（音声認識・GPTとは完全独立、1秒に5個 = 200msごと）
+  useEffect(() => {
+    if (!isStreaming) {
+      // 配信停止時にタイマーをクリア
+      if (randomAizuchiTimerRef.current) {
+        clearInterval(randomAizuchiTimerRef.current);
+        randomAizuchiTimerRef.current = null;
+      }
+      return;
+    }
+
+    // 配信開始時にタイマーを開始
+    const interval = setInterval(() => {
+      const aizuchiText = pickRandomAizuchi();
+      const comment: Comment = {
+        id: Date.now().toString() + Math.random(),
+        text: aizuchiText,
+        special: false,
+        timestamp: Date.now(),
+        userName: '',
+        isUserComment: false,
+        role: 'assistant',
+        type: 'aizuchi'
+      };
+      
+      setComments(prev => {
+        // Keep only last 100 comments for performance
+        const newComments = [...prev, comment].slice(-100);
+        return newComments;
+      });
+    }, 200); // 200ms = 1秒に5個
+    
+    randomAizuchiTimerRef.current = interval;
+    
+    return () => {
+      if (randomAizuchiTimerRef.current) {
+        clearInterval(randomAizuchiTimerRef.current);
+        randomAizuchiTimerRef.current = null;
+      }
+    };
+  }, [isStreaming, pickRandomAizuchi]);
 
   // 無音検知でflushBuffer()を呼ぶ
   const flushBuffer = useCallback(async () => {
