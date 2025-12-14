@@ -363,9 +363,42 @@ export default function StreamPage() {
   // Auto-scroll to bottom when new comments are added
   useEffect(() => {
     if (isAutoScroll && commentsContainerRef.current) {
-      commentsContainerRef.current.scrollTop = commentsContainerRef.current.scrollHeight;
+      const container = commentsContainerRef.current;
+      const beforeScroll = container.scrollTop;
+      container.scrollTop = container.scrollHeight;
+      const afterScroll = container.scrollTop;
+      console.log('[Auto Scroll]', {
+        isAutoScroll,
+        beforeScroll,
+        afterScroll,
+        scrollHeight: container.scrollHeight,
+        clientHeight: container.clientHeight
+      });
     }
   }, [comments, isAutoScroll]);
+
+  // デバッグ: チャットコンテナの高さとスクロール状態を確認
+  useEffect(() => {
+    if (commentsContainerRef.current) {
+      const container = commentsContainerRef.current;
+      const checkScroll = () => {
+        console.log('[Chat Scroll Debug]', {
+          scrollHeight: container.scrollHeight,
+          clientHeight: container.clientHeight,
+          scrollTop: container.scrollTop,
+          canScroll: container.scrollHeight > container.clientHeight,
+          overflowY: window.getComputedStyle(container).overflowY,
+          height: container.offsetHeight,
+          parentHeight: container.parentElement?.offsetHeight,
+        });
+      };
+      checkScroll();
+      // リサイズ時にも確認
+      const resizeObserver = new ResizeObserver(checkScroll);
+      resizeObserver.observe(container);
+      return () => resizeObserver.disconnect();
+    }
+  }, [comments]);
 
   // リモートストリームをビデオ要素に設定
   useEffect(() => {
@@ -459,7 +492,7 @@ export default function StreamPage() {
       text,
       special,
       timestamp: Date.now(),
-      userName: isUserComment ? '視聴者' : 'Bot',
+      userName: isUserComment ? '視聴者' : '',
       isUserComment,
       stampSrc,
       role: role || (isUserComment ? 'user' : 'assistant'),
@@ -733,7 +766,16 @@ export default function StreamPage() {
       const { scrollTop, scrollHeight, clientHeight } = commentsContainerRef.current;
       // より厳密な判定（10px以内）
       const isAtBottom = scrollHeight - scrollTop - clientHeight < 10;
+      const prevAutoScroll = isAutoScroll;
       setIsAutoScroll(isAtBottom);
+      console.log('[Handle Scroll]', {
+        scrollTop,
+        scrollHeight,
+        clientHeight,
+        isAtBottom,
+        prevAutoScroll,
+        newAutoScroll: isAtBottom
+      });
     }
   };
 
@@ -1090,9 +1132,9 @@ export default function StreamPage() {
         {/* Comments Panel - YouTube Live style (2人以上で非表示) */}
         {connectedUserCount < 2 && (
         <div className="absolute right-4 top-4 bottom-20 w-80 pointer-events-auto">
-          <div className="h-full bg-black bg-opacity-80 rounded-lg flex flex-col">
+          <div className="bg-black bg-opacity-80 rounded-lg flex flex-col" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             {/* Comment Header */}
-            <div className="p-3 border-b border-gray-600 flex justify-between items-center">
+            <div className="p-3 border-b border-gray-600 flex justify-between items-center flex-shrink-0">
               <h3 className="text-white text-sm font-medium">ライブチャット</h3>
               {!isAutoScroll && (
                 <button
@@ -1108,8 +1150,16 @@ export default function StreamPage() {
             <div 
               ref={commentsContainerRef}
               onScroll={handleScroll}
-              className="flex-1 overflow-y-scroll p-2"
-              style={{ maxHeight: 'calc(100% - 60px)' }}
+              className="p-2"
+              style={{ 
+                flex: '1 1 0',
+                overflowY: 'scroll',
+                overflowX: 'hidden',
+                minHeight: 0,
+                WebkitOverflowScrolling: 'touch',
+                position: 'relative',
+                zIndex: 10
+              }}
             >
               {comments.map((comment, index) => (
                 <div
@@ -1119,23 +1169,17 @@ export default function StreamPage() {
                   <div className={`p-2 rounded ${
                     comment.isUserComment 
                       ? 'bg-blue-600 bg-opacity-20 border-l-2 border-blue-400' 
-                      : comment.type === 'gpt'
-                      ? 'bg-purple-600 bg-opacity-20 border-l-2 border-purple-400'
                       : 'bg-gray-600 bg-opacity-20'
                   }`}>
-                    <div className="flex items-start gap-2">
-                      <span className={`text-xs font-medium ${
-                        comment.isUserComment ? 'text-blue-300' : comment.type === 'gpt' ? 'text-purple-300' : 'text-gray-300'
-                      }`}>
-                        {comment.userName}
-                        {comment.type === 'gpt' && (
-                          <span className="ml-1 text-[10px] bg-purple-500 px-1 rounded">GPT</span>
-                        )}
-                        {comment.type === 'aizuchi' && (
-                          <span className="ml-1 text-[10px] bg-gray-500 px-1 rounded">相槌</span>
-                        )}
-                      </span>
-                    </div>
+                    {comment.userName && (
+                      <div className="flex items-start gap-2">
+                        <span className={`text-xs font-medium ${
+                          comment.isUserComment ? 'text-blue-300' : 'text-gray-300'
+                        }`}>
+                          {comment.userName}
+                        </span>
+                      </div>
+                    )}
                     {comment.stampSrc ? (
                       <div className="mt-1">
                         <img
@@ -1148,8 +1192,6 @@ export default function StreamPage() {
                       <p className={`text-sm mt-1 ${
                         comment.special 
                           ? 'text-yellow-300 font-bold text-base' 
-                          : comment.type === 'gpt'
-                          ? 'text-purple-200'
                           : 'text-white'
                       }`}>
                         {comment.text}
