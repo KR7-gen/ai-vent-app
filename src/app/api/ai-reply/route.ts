@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('[ai-reply] Request received');
     const { roomId, userText } = await request.json();
+    console.log('[ai-reply] roomId:', roomId, 'userText length:', userText?.length);
 
     if (!userText || typeof userText !== 'string') {
+      console.error('[ai-reply] Invalid userText');
       return NextResponse.json(
         { error: 'Invalid userText provided' },
         { status: 400 }
@@ -12,6 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!roomId || typeof roomId !== 'string') {
+      console.error('[ai-reply] Invalid roomId');
       return NextResponse.json(
         { error: 'Invalid roomId provided' },
         { status: 400 }
@@ -20,8 +24,9 @@ export async function POST(request: NextRequest) {
 
     // OpenAI API Key from environment variable
     const apiKey = process.env.OPENAI_API_KEY;
+    console.log('[ai-reply] API key exists:', !!apiKey, 'API key length:', apiKey?.length || 0);
     if (!apiKey) {
-      console.error('OPENAI_API_KEY not configured');
+      console.error('[ai-reply] OPENAI_API_KEY not configured');
       return NextResponse.json(
         { error: 'API key not configured' },
         { status: 500 }
@@ -65,11 +70,14 @@ export async function POST(request: NextRequest) {
 
       const data = await response.json();
       const replyText = data.choices?.[0]?.message?.content?.trim();
+      console.log('[ai-reply] OpenAI response received, replyText length:', replyText?.length || 0);
 
       if (!replyText) {
+        console.error('[ai-reply] No response from OpenAI');
         throw new Error('No response from OpenAI');
       }
 
+      console.log('[ai-reply] Returning replyText:', replyText.substring(0, 50) + '...');
       return NextResponse.json({ replyText });
 
     } catch (fetchError) {
