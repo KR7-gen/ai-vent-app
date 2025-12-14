@@ -84,6 +84,7 @@ export default function StreamPage() {
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null); // 無音検知用タイマー
   const lastAizuchiRef = useRef<string | null>(null); // 直前の相槌テキスト
   const lastPromptRef = useRef<boolean>(false); // 直前がpromptかどうか
+  const lastRecognitionEventTimeRef = useRef<number>(Date.now()); // 最後の音声認識イベントの時刻
 
   // stream-configで選択した背景画像を読み込む
   useEffect(() => {
@@ -690,18 +691,26 @@ export default function StreamPage() {
 
   // 音声認識イベントを受けてtranscriptをbufferRefに蓄積
   const handleRecognitionEvent = useCallback((transcript: string) => {
+    console.log('[Recognition] Event received:', transcript.substring(0, 50));
+    // 最後のイベント時刻を更新
+    lastRecognitionEventTimeRef.current = Date.now();
+    
     // transcriptをバッファに追加
     if (transcript.trim()) {
       bufferRef.current += (bufferRef.current ? ' ' : '') + transcript.trim();
+      console.log('[Recognition] Buffer updated, length:', bufferRef.current.length);
     }
 
     // 無音タイマーをリセット
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
 
     // 1000ms後にflushBuffer()を呼ぶ
     silenceTimerRef.current = setTimeout(() => {
+      console.log('[Recognition] Silence timer fired, flushing buffer');
+      silenceTimerRef.current = null;
       flushBuffer();
     }, 1000);
   }, [flushBuffer]);
@@ -710,20 +719,74 @@ export default function StreamPage() {
     error: speechError,
     startRecognition,
     stopRecognition,
-  } = useSpeechRecognition(handleRecognitionEvent);
+  } = useSpeechRecognition(handleRecognitionEvent, isStreaming);
 
   const ensureRecognitionStarted = useCallback(() => {
-    if (isRecognitionActiveRef.current) return;
+    if (isRecognitionActiveRef.current) {
+      // 既にアクティブでも、最後のイベントから時間が経過している場合は再起動
+      const now = Date.now();
+      const timeSinceLastEvent = now - lastRecognitionEventTimeRef.current;
+      if (timeSinceLastEvent < 15000) {
+        return; // 最近イベントがあった場合は再起動不要
+      }
+      // 長時間イベントがない場合は強制的に再起動
+      console.log('[Recognition] Recognition active but no events, forcing restart...');
+      isRecognitionActiveRef.current = false;
+    }
+    console.log('[Recognition] Starting recognition');
     startRecognition();
     isRecognitionActiveRef.current = true;
     lastAizuchiTimeRef.current = Date.now();
+    lastRecognitionEventTimeRef.current = Date.now(); // 開始時刻を記録
   }, [startRecognition]);
 
   const ensureRecognitionStopped = useCallback(() => {
     if (!isRecognitionActiveRef.current) return;
+    console.log('[Recognition] Stopping recognition');
     stopRecognition();
     isRecognitionActiveRef.current = false;
   }, [stopRecognition]);
+
+  // 配信中は音声認識が確実に動作し続けるように監視
+  useEffect(() => {
+    if (!isStreaming) return;
+
+    // 定期的に音声認識の状態をチェックして、停止していたら再起動
+    const checkInterval = setInterval(() => {
+      if (!isStreaming) return;
+      
+      const now = Date.now();
+      const timeSinceLastEvent = now - lastRecognitionEventTimeRef.current;
+      
+      // 音声認識が非アクティブな場合、または最後のイベントから15秒以上経過している場合
+      // （音声認識が停止している可能性が高い）再起動
+      if (!isRecognitionActiveRef.current || timeSinceLastEvent > 15000) {
+        if (!isRecognitionActiveRef.current) {
+          console.log('[Recognition] Recognition inactive during streaming, restarting...');
+        } else {
+          console.log('[Recognition] No recognition events for', timeSinceLastEvent, 'ms, restarting...');
+        }
+        // 強制的に再起動
+        isRecognitionActiveRef.current = false;
+        ensureRecognitionStarted();
+        lastRecognitionEventTimeRef.current = now; // 再起動時刻を記録
+      }
+    }, 5000); // 5秒ごとにチェック
+
+    // バッファにテキストが蓄積されているのにタイマーが設定されていない場合、
+    // 長時間無音の可能性があるので強制的にflushBuffer()を呼ぶ
+    const bufferCheckInterval = setInterval(() => {
+      if (isStreaming && bufferRef.current.trim().length > 0 && !silenceTimerRef.current) {
+        console.log('[Recognition] Buffer has text but no timer, flushing...');
+        flushBuffer();
+      }
+    }, 3000); // 3秒ごとにチェック
+
+    return () => {
+      clearInterval(checkInterval);
+      clearInterval(bufferCheckInterval);
+    };
+  }, [isStreaming, ensureRecognitionStarted, flushBuffer]);
 
   useEffect(() => {
     if (mediaError) {
@@ -791,6 +854,8 @@ export default function StreamPage() {
     try {
       setError(null);
       await startCamera();
+      // 音声認識の時刻追跡を初期化
+      lastRecognitionEventTimeRef.current = Date.now();
       ensureRecognitionStarted();
       // 録画は「録画開始」ボタンから手動で開始する
       

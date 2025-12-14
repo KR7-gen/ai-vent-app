@@ -51,7 +51,8 @@ interface UseSpeechRecognitionResult {
 }
 
 export const useSpeechRecognition = (
-  onRecognized?: (transcript: string) => void
+  onRecognized?: (transcript: string) => void,
+  isStreaming?: boolean
 ): UseSpeechRecognitionResult => {
   const [error, setError] = useState<string | null>(null);
 
@@ -66,8 +67,33 @@ export const useSpeechRecognition = (
     }
 
     try {
+      // 配信中は常に再起動を許可
       shouldRestartRef.current = true;
-      recognition.start();
+      // 既に起動している場合は一度停止してから再起動
+      try {
+        recognition.stop();
+      } catch (e) {
+        // 停止に失敗しても続行（既に停止している可能性がある）
+      }
+      // 少し待ってから再起動（ブラウザの制限を回避）
+      setTimeout(() => {
+        try {
+          recognition.start();
+          console.log('[SpeechRecognition] Started successfully');
+        } catch (err) {
+          console.error('Error starting speech recognition:', err);
+          // エラーが発生した場合、少し待ってから再試行
+          setTimeout(() => {
+            try {
+              recognition.start();
+              console.log('[SpeechRecognition] Restarted after error');
+            } catch (retryErr) {
+              console.error('Error restarting speech recognition:', retryErr);
+              setError('音声認識の開始に失敗しました。');
+            }
+          }, 1000);
+        }
+      }, 100);
     } catch (err) {
       console.error('Error starting speech recognition:', err);
       setError('音声認識の開始に失敗しました。');
@@ -118,25 +144,68 @@ export const useSpeechRecognition = (
     };
 
     recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
+      console.error('[SpeechRecognition] Error:', event.error);
+      // no-speech や aborted は正常な動作の一部なので無視
+      // ただし、長時間 no-speech が続くと音声認識が停止する可能性があるため、
+      // shouldRestartRef が true の場合は onend で再起動される
       if (event.error !== 'no-speech' && event.error !== 'aborted') {
         setError(`音声認識エラー: ${event.error}`);
+        // 重大なエラーの場合でも、shouldRestartRef が true なら再起動を試みる
+        if (shouldRestartRef.current && (event.error === 'network' || event.error === 'service-not-allowed')) {
+          console.log('[SpeechRecognition] Critical error, will retry on end');
+        }
       }
     };
 
     recognition.onend = () => {
-      if (shouldRestartRef.current) {
-        try {
-          recognition.start();
-        } catch (err) {
-          console.error('Error restarting recognition:', err);
+      // 配信中は常に再起動（無言で自動停止した場合でも）
+      const shouldRestart = shouldRestartRef.current || (isStreaming ?? false);
+      console.log('[SpeechRecognition] Recognition ended, shouldRestart:', shouldRestartRef.current, 'isStreaming:', isStreaming);
+      
+      if (shouldRestart) {
+        // 配信中の場合、shouldRestartRef を true に保つ
+        if (isStreaming) {
+          shouldRestartRef.current = true;
         }
+        
+        // 少し待ってから再起動（ブラウザの制限を回避）
+        setTimeout(() => {
+          try {
+            recognition.start();
+            console.log('[SpeechRecognition] Auto-restarted after end');
+          } catch (err) {
+            console.error('Error restarting recognition:', err);
+            // 再起動に失敗した場合、もう一度試行
+            setTimeout(() => {
+              const shouldRetry = shouldRestartRef.current || (isStreaming ?? false);
+              if (shouldRetry) {
+                // 配信中の場合、shouldRestartRef を true に保つ
+                if (isStreaming) {
+                  shouldRestartRef.current = true;
+                }
+                try {
+                  recognition.start();
+                  console.log('[SpeechRecognition] Retried restart after error');
+                } catch (retryErr) {
+                  console.error('Error retrying recognition restart:', retryErr);
+                }
+              }
+            }, 1000);
+          }
+        }, 100);
+      } else {
+        console.log('[SpeechRecognition] Not restarting (shouldRestart=false, isStreaming=false)');
       }
     };
 
     recognitionRef.current = recognition;
     setError(null);
-  }, [onRecognized]);
+    
+    // 配信状態が変わったら shouldRestartRef を更新
+    if (isStreaming) {
+      shouldRestartRef.current = true;
+    }
+  }, [onRecognized, isStreaming]);
 
   useEffect(() => {
     return () => {
