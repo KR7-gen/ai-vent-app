@@ -640,7 +640,7 @@ export default function StreamPage() {
     return selected.text;
   }, [localAizuchi]);
 
-  // ランダム相槌タイマー（音声認識・GPTとは完全独立、1秒に5個 = 200msごと）
+  // ランダム相槌タイマー（音声認識・GPTとは完全独立、12秒に1個 = 12000msごと）
   useEffect(() => {
     if (!isStreaming) {
       // 配信停止時にタイマーをクリア
@@ -670,7 +670,7 @@ export default function StreamPage() {
         const newComments = [...prev, comment].slice(-100);
         return newComments;
       });
-    }, 200); // 200ms = 1秒に5個
+    }, 12000); // 12000ms = 12秒に1個
     
     randomAizuchiTimerRef.current = interval;
     
