@@ -640,7 +640,7 @@ export default function StreamPage() {
     return selected.text;
   }, [localAizuchi]);
 
-  // ランダム相槌タイマー（音声認識・GPTとは完全独立、12秒に1個 = 12000msごと）
+  // ランダム相槌タイマー（音声認識・GPTとは完全独立、3秒に1個 = 3000msごと）
   useEffect(() => {
     if (!isStreaming) {
       // 配信停止時にタイマーをクリア
@@ -670,7 +670,7 @@ export default function StreamPage() {
         const newComments = [...prev, comment].slice(-100);
         return newComments;
       });
-    }, 12000); // 12000ms = 12秒に1個
+    }, 3000); // 3000ms = 3秒に1個
     
     randomAizuchiTimerRef.current = interval;
     
@@ -692,37 +692,15 @@ export default function StreamPage() {
     // バッファをクリア
     bufferRef.current = '';
 
-    // 20文字未満の場合はGPTを使わず相槌にする
-    if (text.length < 20) {
-      const now = Date.now();
-      const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
-      const cooldownTime = 3000 + Math.random() * 2000;
-
-      if (timeSinceLastAizuchi >= cooldownTime) {
-        lastAizuchiTimeRef.current = now;
-        const aizuchiText = pickAizuchiByContext(text);
-        addComment(aizuchiText, false, false, undefined, 'assistant', 'aizuchi');
-      }
-      return;
-    }
-
-    // 相槌 80-90% / GPT 10-20% を抽選（1-2割でGPT）
-    // 20%の固定確率でGPTを選ぶ（1-2割の範囲内、より確実に選ばれるように）
-    const gptProbability = 0.20; // 20%の固定確率
-    const randomValue = Math.random();
-    const shouldUseGpt = randomValue < gptProbability;
-
-    // GPTは lastGptAt から30秒以内なら相槌にフォールバック
+    // 音声認識テキストは常にAI応答（GPT）のみを試みる
     const now = Date.now();
     const timeSinceLastGpt = now - lastGptAt.current;
     const gptCooldown = 30000; // 30秒
 
-    console.log('[flushBuffer] ===== GPT Decision =====');
-    console.log('[flushBuffer] Random value:', randomValue.toFixed(3), 'gptProbability:', gptProbability.toFixed(3));
-    console.log('[flushBuffer] shouldUseGpt:', shouldUseGpt, 'timeSinceLastGpt:', timeSinceLastGpt, 'ms', 'gptCooldown:', gptCooldown);
-    console.log('[flushBuffer] Condition check:', 'shouldUseGpt:', shouldUseGpt, 'timeSinceLastGpt >= gptCooldown:', timeSinceLastGpt >= gptCooldown);
+    console.log('[flushBuffer] ===== GPT Only Mode =====');
+    console.log('[flushBuffer] timeSinceLastGpt:', timeSinceLastGpt, 'ms', 'gptCooldown:', gptCooldown);
 
-    if (shouldUseGpt && timeSinceLastGpt >= gptCooldown) {
+    if (timeSinceLastGpt >= gptCooldown) {
       // GPT呼び出し
       console.log('[flushBuffer] ===== Calling GPT API =====');
       console.log('[flushBuffer] Text length:', text.length, 'Text preview:', text.substring(0, 50) + '...');
@@ -763,30 +741,11 @@ export default function StreamPage() {
         console.error('[flushBuffer] GPT API exception:', error);
         // エラー時は相槌にフォールバック
       }
-    } else {
-      if (!shouldUseGpt) {
-        console.log('[flushBuffer] GPT not selected (random chance)');
-      } else {
-        console.log('[flushBuffer] GPT on cooldown (timeSinceLastGpt:', timeSinceLastGpt, 'ms)');
-      }
     }
 
-    // 相槌を返す（GPTを使わない場合、またはGPTエラー時）
-    console.log('[flushBuffer] ===== Using Aizuchi =====');
-    const timeSinceLastAizuchi = now - lastAizuchiTimeRef.current;
-    const cooldownTime = 3000 + Math.random() * 2000;
-
-    console.log('[flushBuffer] timeSinceLastAizuchi:', timeSinceLastAizuchi, 'ms', 'cooldownTime:', cooldownTime, 'ms');
-
-    if (timeSinceLastAizuchi >= cooldownTime) {
-      lastAizuchiTimeRef.current = now;
-      const aizuchiText = pickAizuchiByContext(text);
-      console.log('[flushBuffer] Adding aizuchi:', aizuchiText);
-      addComment(aizuchiText, false, false, undefined, 'assistant', 'aizuchi');
-    } else {
-      console.log('[flushBuffer] Aizuchi on cooldown, skipping response');
-    }
-  }, [roomId, addComment, pickAizuchiByContext]);
+    // GPTクールダウン中やエラー時は、音声由来の相槌は行わない
+    console.log('[flushBuffer] GPT on cooldown or failed, skipping aizuchi from speech');
+  }, [roomId, addComment]);
 
   // 音声認識イベントを受けてtranscriptをbufferRefに蓄積
   const handleRecognitionEvent = useCallback((transcript: string) => {
