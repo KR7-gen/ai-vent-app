@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AgreementState } from '@/types';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function AgreementPage() {
+function AgreementPage() {
   const [agreements, setAgreements] = useState<AgreementState>({
     secrecy: false,
     ethics: false,
@@ -158,5 +159,13 @@ export default function AgreementPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AgreementPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <AgreementPage />
+    </ProtectedRoute>
   );
 }

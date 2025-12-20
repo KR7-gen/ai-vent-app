@@ -1,8 +1,9 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function WarningPage() {
+function WarningPage() {
   const router = useRouter();
 
   const handleNext = () => {
@@ -72,5 +73,13 @@ export default function WarningPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function WarningPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <WarningPage />
+    </ProtectedRoute>
   );
 }

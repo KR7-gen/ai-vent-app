@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useMediaStream } from '@/hooks/useMediaStream';
 import { useRecorder } from '@/hooks/useRecorder';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function RecordTestPage() {
+function RecordTestPage() {
   const [aiResponses, setAiResponses] = useState<Array<{ text: string; timestamp: number; isGpt: boolean }>>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -445,5 +446,13 @@ Model: GPT-3.5 Turbo`}
         </div>
       </div>
     </div>
+  );
+}
+
+export default function RecordTestPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <RecordTestPage />
+    </ProtectedRoute>
   );
 }

@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import type { FormErrors } from '@/types';
 import { auth } from "@/lib/firebase";
+import { useAuth } from '@/contexts/AuthContext';
 
 // エラーメッセージのマッピング関数
 const getErrorMessage = (errorCode: string): string => {
@@ -33,6 +34,16 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { user } = useAuth();
+
+  // 既にログインしている場合はリダイレクト
+  useEffect(() => {
+    if (user) {
+      const next = searchParams.get('next');
+      router.push(next || '/room-select');
+    }
+  }, [user, router, searchParams]);
 
   const validateForm = () => {
     const newErrors: FormErrors = {};
@@ -66,8 +77,9 @@ export default function LoginPage() {
     
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      // ログイン成功時は /room-select に遷移
-      router.push('/room-select');
+      // ログイン成功時はnextパラメータがあればそこに、なければ /room-select に遷移
+      const next = searchParams.get('next');
+      router.push(next || '/room-select');
     } catch (error: any) {
       const errorMessage = getErrorMessage(error.code || '');
       setErrors({ general: errorMessage });

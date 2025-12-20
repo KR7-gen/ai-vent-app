@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DisplayMode, BackgroundPreview } from '@/types';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function StreamConfigPage() {
+function StreamConfigPage() {
   const [displayMode, setDisplayMode] = useState<DisplayMode>('background');
   const [backgroundImage, setBackgroundImage] = useState('tsubucafe1');
   const [autoSave, setAutoSave] = useState(true);
@@ -139,5 +140,13 @@ export default function StreamConfigPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function StreamConfigPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <StreamConfigPage />
+    </ProtectedRoute>
   );
 }

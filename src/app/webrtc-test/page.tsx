@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function WebRTCTestPage() {
+function WebRTCTestPage() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
@@ -298,6 +299,14 @@ export default function WebRTCTestPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function WebRTCTestPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <WebRTCTestPage />
+    </ProtectedRoute>
   );
 }
 

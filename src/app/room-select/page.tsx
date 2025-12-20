@@ -4,8 +4,9 @@ import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import io from 'socket.io-client';
 import type { RoomMode } from '@/types';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function RoomSelectPage() {
+function RoomSelectPage() {
   const [mode, setMode] = useState<RoomMode>('create');
   const [roomId, setRoomId] = useState('');
   const [error, setError] = useState<string>('');
@@ -236,5 +237,13 @@ export default function RoomSelectPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function RoomSelectPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <RoomSelectPage />
+    </ProtectedRoute>
   );
 }

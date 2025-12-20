@@ -7,8 +7,9 @@ import type { Comment, BackgroundOption, StampOption, Aizuchi, AizuchiTag } from
 import { useMediaStream } from '@/hooks/useMediaStream';
 import { useRecorder } from '@/hooks/useRecorder';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
+import ProtectedRoute from '@/components/ProtectedRoute';
 
-export default function StreamPage() {
+function StreamPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamTime, setStreamTime] = useState(0);
   const [silenceTime, setSilenceTime] = useState(0);
@@ -1707,5 +1708,13 @@ export default function StreamPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function StreamPageWrapper() {
+  return (
+    <ProtectedRoute>
+      <StreamPage />
+    </ProtectedRoute>
   );
 }
