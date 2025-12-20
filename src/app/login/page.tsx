@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { FormErrors } from '@/types';
+import { auth } from "@/lib/firebase";
+
+
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
