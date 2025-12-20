@@ -138,6 +138,11 @@ export default function StreamPage() {
   const lastPromptRef = useRef<boolean>(false); // 直前がpromptかどうか
   const lastRecognitionEventTimeRef = useRef<number>(Date.now()); // 最後の音声認識イベントの時刻
   const randomAizuchiTimerRef = useRef<NodeJS.Timeout | null>(null); // ランダム相槌用タイマー（音声認識とは独立）
+  const lastChatResponseTimeRef = useRef<number>(Date.now()); // 最後にAI側がチャット応答した時刻
+  const lastGptResponseTimeRef = useRef<number>(Date.now()); // 最後にGPT応答した時刻（相槌とは別に追跡）
+  const continuousSpeakingStartTimeRef = useRef<number | null>(null); // 連続してしゃべり続けている開始時刻
+  const continuousSpeakingTimerRef = useRef<NodeJS.Timeout | null>(null); // 連続してしゃべり続けている場合のチェック用タイマー
+  const forceResponseTimerRef = useRef<NodeJS.Timeout | null>(null); // 30秒間GPT応答がない場合の強制GPT応答用タイマー
 
   // stream-configで選択した背景画像を読み込む
   useEffect(() => {
@@ -530,7 +535,7 @@ export default function StreamPage() {
     }
   }, [stream]);
 
-  const addComment = (
+  const addComment = useCallback((
     text: string, 
     special: boolean = false, 
     isUserComment: boolean = false, 
@@ -555,7 +560,16 @@ export default function StreamPage() {
       const newComments = [...prev, comment].slice(-100);
       return newComments;
     });
-  };
+    
+    // AI側の応答の場合、最後の応答時刻を更新
+    if (!isUserComment && (role === 'assistant' || !isUserComment)) {
+      lastChatResponseTimeRef.current = Date.now();
+      // GPT応答の場合、GPT応答時刻も更新
+      if (type === 'gpt') {
+        lastGptResponseTimeRef.current = Date.now();
+      }
+    }
+  }, []);
 
   // 発話テキストからタグを推定
   const detectAizuchiTag = useCallback((userText: string): AizuchiTag => {
@@ -654,22 +668,7 @@ export default function StreamPage() {
     // 配信開始時にタイマーを開始
     const interval = setInterval(() => {
       const aizuchiText = pickRandomAizuchi();
-      const comment: Comment = {
-        id: Date.now().toString() + Math.random(),
-        text: aizuchiText,
-        special: false,
-        timestamp: Date.now(),
-        userName: '',
-        isUserComment: false,
-        role: 'assistant',
-        type: 'aizuchi'
-      };
-      
-      setComments(prev => {
-        // Keep only last 100 comments for performance
-        const newComments = [...prev, comment].slice(-100);
-        return newComments;
-      });
+      addComment(aizuchiText, false, false, undefined, 'assistant', 'aizuchi');
     }, 3000); // 3000ms = 3秒に1個
     
     randomAizuchiTimerRef.current = interval;
@@ -680,7 +679,51 @@ export default function StreamPage() {
         randomAizuchiTimerRef.current = null;
       }
     };
-  }, [isStreaming, pickRandomAizuchi]);
+  }, [isStreaming, pickRandomAizuchi, addComment]);
+
+  // 新しい話題を振る（30秒間GPT応答がない場合に使用）
+  const promptNewTopic = useCallback(async () => {
+    const now = Date.now();
+    const timeSinceLastGptCall = now - lastGptAt.current;
+    const timeSinceLastGptResponse = now - lastGptResponseTimeRef.current;
+    const gptCooldown = 30000; // 30秒
+
+    // GPT応答が30秒間ない場合、かつGPT APIのクールダウンが過ぎている場合はGPT APIを呼ぶ
+    if (timeSinceLastGptResponse >= 30000 && timeSinceLastGptCall >= gptCooldown) {
+      console.log('[promptNewTopic] ===== Calling GPT API for new topic =====');
+      try {
+        lastGptAt.current = now;
+        // 無音の場合でも新しい話題を振るためのメッセージ
+        const promptText = '最近どう？何か話したいことある？';
+        console.log('[promptNewTopic] Fetching /api/ai-reply with prompt text...');
+        const response = await fetch('/api/ai-reply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId: roomId,
+            userText: promptText,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.replyText) {
+            console.log('[promptNewTopic] Adding GPT response:', data.replyText);
+            addComment(data.replyText, false, false, undefined, 'assistant', 'gpt');
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('[promptNewTopic] GPT API exception:', error);
+        // GPT APIが失敗した場合はエラーをログに残すだけ（相槌は3秒ごとに自動で送られるので）
+        return;
+      }
+    } else {
+      console.log('[promptNewTopic] Skipping - timeSinceLastGptResponse:', timeSinceLastGptResponse, 'timeSinceLastGptCall:', timeSinceLastGptCall);
+    }
+  }, [roomId, addComment]);
 
   // 無音検知でflushBuffer()を呼ぶ
   const flushBuffer = useCallback(async () => {
@@ -691,6 +734,8 @@ export default function StreamPage() {
 
     // バッファをクリア
     bufferRef.current = '';
+    // 連続してしゃべり続けている状態をリセット
+    continuousSpeakingStartTimeRef.current = null;
 
     // 音声認識テキストは常にAI応答（GPT）のみを試みる
     const now = Date.now();
@@ -750,8 +795,15 @@ export default function StreamPage() {
   // 音声認識イベントを受けてtranscriptをbufferRefに蓄積
   const handleRecognitionEvent = useCallback((transcript: string) => {
     console.log('[Recognition] Event received:', transcript.substring(0, 50));
+    const now = Date.now();
     // 最後のイベント時刻を更新
-    lastRecognitionEventTimeRef.current = Date.now();
+    lastRecognitionEventTimeRef.current = now;
+    
+    // 連続してしゃべり続けている状態を記録
+    if (continuousSpeakingStartTimeRef.current === null) {
+      continuousSpeakingStartTimeRef.current = now;
+      console.log('[Recognition] Continuous speaking started');
+    }
     
     // transcriptをバッファに追加
     if (transcript.trim()) {
@@ -846,6 +898,79 @@ export default function StreamPage() {
     };
   }, [isStreaming, ensureRecognitionStarted, flushBuffer]);
 
+  // 30秒間応答がない場合の強制応答
+  useEffect(() => {
+    if (!isStreaming) {
+      if (forceResponseTimerRef.current) {
+        clearInterval(forceResponseTimerRef.current);
+        forceResponseTimerRef.current = null;
+      }
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastGptResponse = now - lastGptResponseTimeRef.current;
+      const gptResponseTimeout = 30000; // 30秒
+
+      // GPT応答が30秒間ない場合、GPTを呼ぶ（相槌は3秒ごとに自動で送られるので、GPT応答のみをチェック）
+      if (timeSinceLastGptResponse >= gptResponseTimeout) {
+        console.log('[ForceResponse] 30 seconds passed without GPT response, prompting new topic');
+        promptNewTopic();
+      }
+    }, 5000); // 5秒ごとにチェック
+
+    forceResponseTimerRef.current = interval;
+
+    return () => {
+      if (forceResponseTimerRef.current) {
+        clearInterval(forceResponseTimerRef.current);
+        forceResponseTimerRef.current = null;
+      }
+    };
+  }, [isStreaming, promptNewTopic]);
+
+  // ユーザーがしゃべり続けている場合（5秒以上連続）の処理
+  useEffect(() => {
+    if (!isStreaming) {
+      if (continuousSpeakingTimerRef.current) {
+        clearInterval(continuousSpeakingTimerRef.current);
+        continuousSpeakingTimerRef.current = null;
+      }
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      
+      // 連続してしゃべり続けている状態をチェック
+      if (continuousSpeakingStartTimeRef.current !== null) {
+        const continuousSpeakingDuration = now - continuousSpeakingStartTimeRef.current;
+        const continuousSpeakingThreshold = 5000; // 5秒
+
+        if (continuousSpeakingDuration >= continuousSpeakingThreshold && bufferRef.current.trim().length > 0) {
+          console.log('[ContinuousSpeaking] User has been speaking continuously for', continuousSpeakingDuration, 'ms, sending aizuchi');
+          
+          // バッファから相槌を選択して送信
+          const aizuchiText = pickAizuchiByContext(bufferRef.current);
+          addComment(aizuchiText, false, false, undefined, 'assistant', 'aizuchi');
+          
+          // 連続しゃべり状態をリセット（一度応答したので）
+          continuousSpeakingStartTimeRef.current = null;
+        }
+      }
+    }, 1000); // 1秒ごとにチェック
+
+    continuousSpeakingTimerRef.current = interval;
+
+    return () => {
+      if (continuousSpeakingTimerRef.current) {
+        clearInterval(continuousSpeakingTimerRef.current);
+        continuousSpeakingTimerRef.current = null;
+      }
+    };
+  }, [isStreaming, pickAizuchiByContext, addComment]);
+
   useEffect(() => {
     if (mediaError) {
       setError(mediaError);
@@ -914,6 +1039,10 @@ export default function StreamPage() {
       await startCamera();
       // 音声認識の時刻追跡を初期化
       lastRecognitionEventTimeRef.current = Date.now();
+      // チャット応答の時刻を初期化（配信開始時点からカウント）
+      lastChatResponseTimeRef.current = Date.now();
+      // GPT応答の時刻を初期化（配信開始時点からカウント）
+      lastGptResponseTimeRef.current = Date.now();
       ensureRecognitionStarted();
       // 録画は「録画開始」ボタンから手動で開始する
       
