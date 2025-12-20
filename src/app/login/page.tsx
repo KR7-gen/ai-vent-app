@@ -2,10 +2,30 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import type { FormErrors } from '@/types';
 import { auth } from "@/lib/firebase";
 
-
+// エラーメッセージのマッピング関数
+const getErrorMessage = (errorCode: string): string => {
+  switch (errorCode) {
+    case 'auth/user-not-found':
+      return 'そのメールアドレスのユーザーが見つかりません';
+    case 'auth/wrong-password':
+      return 'パスワードが正しくありません';
+    case 'auth/invalid-email':
+      return 'メールアドレスの形式が正しくありません';
+    case 'auth/user-disabled':
+      return 'このアカウントは無効化されています';
+    case 'auth/too-many-requests':
+      return '試行回数が多すぎます。しばらく待ってから再度お試しください';
+    case 'auth/invalid-credential':
+      return 'メールアドレスまたはパスワードが正しくありません';
+    default:
+      return 'ログインに失敗しました。再度お試しください';
+  }
+};
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -45,11 +65,12 @@ export default function LoginPage() {
     setIsLoading(true);
     
     try {
-      // モックログインディレイ
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await signInWithEmailAndPassword(auth, email, password);
+      // ログイン成功時は /room-select に遷移
       router.push('/room-select');
-    } catch (error) {
-      setErrors({ email: 'ログインに失敗しました。再度お試しください。' });
+    } catch (error: any) {
+      const errorMessage = getErrorMessage(error.code || '');
+      setErrors({ general: errorMessage });
     } finally {
       setIsLoading(false);
     }
@@ -103,6 +124,12 @@ export default function LoginPage() {
             />
             {errors.password && <p className="text-red-500 text-sm mt-1">{errors.password}</p>}
           </div>
+
+          {errors.general && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-red-600 text-sm">{errors.general}</p>
+            </div>
+          )}
           
           <button
             type="submit"
@@ -124,8 +151,22 @@ export default function LoginPage() {
           </button>
         </form>
         
-        <div className="mt-6 text-center">
-          <p className="text-gray-500 text-sm">
+        <div className="mt-6 space-y-2 text-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-center sm:gap-4">
+            <Link 
+              href="/signup" 
+              className="text-sm text-gray-600 hover:text-gray-900 underline"
+            >
+              新規登録はこちら
+            </Link>
+            <Link 
+              href="/reset-password" 
+              className="text-sm text-gray-600 hover:text-gray-900 underline"
+            >
+              パスワードを忘れた
+            </Link>
+          </div>
+          <p className="text-gray-500 text-sm mt-4">
             ※管理者から発行されたアカウントをご利用ください
           </p>
         </div>
