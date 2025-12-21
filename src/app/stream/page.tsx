@@ -21,6 +21,7 @@ function StreamPage() {
   const [error, setError] = useState<string | null>(null);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
   const [showStampPanel, setShowStampPanel] = useState(false);
+  const [showRecordingGuide, setShowRecordingGuide] = useState(false);
   const [roomId, setRoomId] = useState<string>('');
   const [showJoinRequest, setShowJoinRequest] = useState(false);
   const [joinRequestData, setJoinRequestData] = useState<{ roomId: string; requesterSocketId: string } | null>(null);
@@ -53,7 +54,7 @@ function StreamPage() {
     error: recorderError,
     startRecording,
     stopRecording,
-  } = useRecorder(stream);
+  } = useRecorder();
   // ローカル相槌候補（タグ付き）
   const localAizuchi: Aizuchi[] = useMemo(() => [
     // ack
@@ -1097,15 +1098,13 @@ function StreamPage() {
     }
   };
 
-  const handleToggleRecording = () => {
+  const handleToggleRecording = async () => {
     try {
       setError(null);
       // フッターの「録画開始/停止」ボタンは useRecorder を直接トグル
       if (!isRecording) {
-        const started = startRecording();
-        if (started) {
-          ensureRecognitionStarted();
-        }
+        // 録画開始前には案内UIを表示
+        setShowRecordingGuide(true);
       } else {
         stopRecording();
         ensureRecognitionStopped();
@@ -1113,6 +1112,20 @@ function StreamPage() {
     } catch (err) {
       setError('録画の切り替えに失敗しました。');
       console.error('Recording toggle error:', err);
+    }
+  };
+
+  const handleStartRecordingFromGuide = async () => {
+    try {
+      setShowRecordingGuide(false);
+      setError(null);
+      const started = await startRecording();
+      if (started) {
+        ensureRecognitionStarted();
+      }
+    } catch (err) {
+      setError('録画の開始に失敗しました。');
+      console.error('Recording start error:', err);
     }
   };
 
@@ -1685,6 +1698,49 @@ function StreamPage() {
                 className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg transition"
               >
                 許可
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recording Guide Dialog */}
+      {showRecordingGuide && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md mx-4">
+            <h3 className="text-xl font-bold text-gray-900 mb-4">📹 録画を開始します</h3>
+            <div className="mb-6">
+              <p className="text-gray-700 mb-3">
+                次に表示される画面で、録画する範囲を選択してください：
+              </p>
+              <ul className="list-disc list-inside text-gray-600 space-y-2 mb-4">
+                <li><strong className="text-gray-900">画面全体</strong> - デスクトップ全体を録画</li>
+                <li><strong className="text-gray-900">ウィンドウ</strong> - 特定のアプリケーションウィンドウを録画</li>
+                <li><strong className="text-gray-900">タブ</strong> - ブラウザのタブを録画（このアプリを選択してください）</li>
+              </ul>
+              <div className="bg-blue-50 border-l-4 border-blue-500 p-3 mb-4">
+                <p className="text-sm text-blue-800">
+                  <strong>💡 重要：</strong> タブを選択する場合は、「タブ音声を共有」にチェックを入れると、アプリの音声も録画に含まれます。
+                </p>
+              </div>
+              <div className="bg-yellow-50 border-l-4 border-yellow-500 p-3">
+                <p className="text-sm text-yellow-800">
+                  <strong>🎤 マイク音声：</strong> マイクの音声は自動的に録画に含まれます。
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowRecordingGuide(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleStartRecordingFromGuide}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition font-medium"
+              >
+                🔴 録画開始
               </button>
             </div>
           </div>
