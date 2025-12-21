@@ -69,7 +69,7 @@ function RecordTestPage() {
     error: recorderError,
     startRecording,
     stopRecording,
-  } = useRecorder(stream);
+  } = useRecorder();
 
   const {
     error: speechError,
@@ -109,8 +109,8 @@ function RecordTestPage() {
     wasRecordingRef.current = isRecording;
   }, [isRecording, stopRecognition]);
 
-  const handleStartRecording = () => {
-    const started = startRecording();
+  const handleStartRecording = async () => {
+    const started = await startRecording();
     if (started) {
       setAiResponses([]);
       lastAizuchiTimeRef.current = Date.now();
