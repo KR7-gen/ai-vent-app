@@ -15,7 +15,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "吐き出し配信 - 誰にも聞かれない安全な配信部屋",
+  title: "つぶカフェ",
   description: "プライベートな環境で気軽に話せる配信プラットフォーム。匿名で安全に感情や思いを吐き出せる場所です。",
 };
 
