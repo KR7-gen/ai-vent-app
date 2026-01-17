@@ -688,11 +688,11 @@ function StreamPage() {
   const promptNewTopic = useCallback(async () => {
     const now = Date.now();
     const timeSinceLastGptCall = now - lastGptAt.current;
-    const timeSinceLastGptResponse = now - lastGptResponseTimeRef.current;
+    const timeSinceLastRecognition = now - lastRecognitionEventTimeRef.current;
     const gptCooldown = SILENCE_PROMPT_INTERVAL_MS;
 
-    // GPT応答が一定時間ない場合、かつGPT APIのクールダウンが過ぎている場合はGPT APIを呼ぶ
-    if (timeSinceLastGptResponse >= SILENCE_PROMPT_INTERVAL_MS && timeSinceLastGptCall >= gptCooldown) {
+    // 無音が一定時間続き、かつGPT APIのクールダウンが過ぎている場合はGPT APIを呼ぶ
+    if (timeSinceLastRecognition >= SILENCE_PROMPT_INTERVAL_MS && timeSinceLastGptCall >= gptCooldown) {
       console.log('[promptNewTopic] ===== Calling GPT API for new topic =====');
       try {
         lastGptAt.current = now;
@@ -724,7 +724,7 @@ function StreamPage() {
         return;
       }
     } else {
-      console.log('[promptNewTopic] Skipping - timeSinceLastGptResponse:', timeSinceLastGptResponse, 'timeSinceLastGptCall:', timeSinceLastGptCall);
+      console.log('[promptNewTopic] Skipping - timeSinceLastRecognition:', timeSinceLastRecognition, 'timeSinceLastGptCall:', timeSinceLastGptCall);
     }
   }, [roomId, addComment]);
 
@@ -913,12 +913,12 @@ function StreamPage() {
 
     const interval = setInterval(() => {
       const now = Date.now();
-      const timeSinceLastGptResponse = now - lastGptResponseTimeRef.current;
-      const gptResponseTimeout = SILENCE_PROMPT_INTERVAL_MS;
+      const timeSinceLastRecognition = now - lastRecognitionEventTimeRef.current;
+      const silenceTimeout = SILENCE_PROMPT_INTERVAL_MS;
 
-      // GPT応答が一定時間ない場合、GPTを呼ぶ（相槌は3秒ごとに自動で送られるので、GPT応答のみをチェック）
-      if (timeSinceLastGptResponse >= gptResponseTimeout) {
-        console.log('[ForceResponse] GPT response timeout, prompting new topic');
+      // 無音が一定時間続いた場合に話題を振る
+      if (timeSinceLastRecognition >= silenceTimeout) {
+        console.log('[ForceResponse] Silence timeout, prompting new topic');
         promptNewTopic();
       }
     }, 1000); // 1秒ごとにチェック
