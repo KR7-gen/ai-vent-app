@@ -34,14 +34,19 @@ function StreamConfigPage() {
     <div className="min-h-screen bg-white p-3 sm:p-4">
       <div className="max-w-2xl mx-auto flex flex-col">
         <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col">
-          <div className="flex items-center mb-3 sm:mb-4 flex-shrink-0">
+          <div className="flex items-center justify-between mb-3 sm:mb-4 flex-shrink-0">
             <button
               onClick={() => router.push('/room-select')}
-              className="text-gray-600 hover:text-gray-900 transition mr-3 text-sm sm:text-base"
+              className="text-gray-600 hover:text-gray-900 transition text-sm sm:text-base"
             >
               ← 戻る
             </button>
-            <div className="flex-1 text-center">
+            <img 
+              src="/backgrounds/LogoForStream-config.png" 
+              alt="Logo" 
+              className="h-[128px] sm:h-[160px] w-auto"
+            />
+            <div className="text-center">
               <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1">配信設定</h1>
               <p className="text-xs sm:text-sm text-gray-600">お好みの設定を選択してください</p>
             </div>
