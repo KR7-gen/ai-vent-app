@@ -133,9 +133,9 @@ function StreamPage() {
   const lastAizuchiTimeRef = useRef(0);
   const isRecognitionActiveRef = useRef(false);
   const bufferRef = useRef<string>(''); // 音声認識テキストを蓄積
-  const GPT_FORCE_RESPONSE_TIMEOUT_MS = 5000; // 5秒に1回は強制応答
-  const GPT_MIN_INTERVAL_MS = 2500; // 5秒に2回以上は応答しない
-  const lastGptAt = useRef<number>(Date.now() - GPT_MIN_INTERVAL_MS); // 最後にGPTを呼んだ時刻
+  const USER_RESPONSE_MIN_INTERVAL_MS = 5000; // ユーザー発話への応答は5秒に1回
+  const SILENCE_PROMPT_INTERVAL_MS = 15000; // 無音時はこちらから話題を振る上限（15秒）
+  const lastGptAt = useRef<number>(Date.now() - USER_RESPONSE_MIN_INTERVAL_MS); // 最後にGPTを呼んだ時刻
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null); // 無音検知用タイマー
   const lastAizuchiRef = useRef<string | null>(null); // 直前の相槌テキスト
   const lastPromptRef = useRef<boolean>(false); // 直前がpromptかどうか
@@ -684,15 +684,15 @@ function StreamPage() {
     };
   }, [isStreaming, pickRandomAizuchi, addComment]);
 
-  // 新しい話題を振る（GPT応答が一定時間ない場合に使用）
+  // 新しい話題を振る（ユーザーが話していない場合に使用）
   const promptNewTopic = useCallback(async () => {
     const now = Date.now();
     const timeSinceLastGptCall = now - lastGptAt.current;
     const timeSinceLastGptResponse = now - lastGptResponseTimeRef.current;
-    const gptCooldown = GPT_MIN_INTERVAL_MS;
+    const gptCooldown = SILENCE_PROMPT_INTERVAL_MS;
 
     // GPT応答が一定時間ない場合、かつGPT APIのクールダウンが過ぎている場合はGPT APIを呼ぶ
-    if (timeSinceLastGptResponse >= GPT_FORCE_RESPONSE_TIMEOUT_MS && timeSinceLastGptCall >= gptCooldown) {
+    if (timeSinceLastGptResponse >= SILENCE_PROMPT_INTERVAL_MS && timeSinceLastGptCall >= gptCooldown) {
       console.log('[promptNewTopic] ===== Calling GPT API for new topic =====');
       try {
         lastGptAt.current = now;
@@ -743,13 +743,13 @@ function StreamPage() {
     // 音声認識テキストは常にAI応答（GPT）のみを試みる
     const now = Date.now();
     const timeSinceLastGpt = now - lastGptAt.current;
-    const gptCooldown = GPT_MIN_INTERVAL_MS;
+    const gptCooldown = USER_RESPONSE_MIN_INTERVAL_MS;
 
     console.log('[flushBuffer] ===== GPT Only Mode =====');
     console.log('[flushBuffer] timeSinceLastGpt:', timeSinceLastGpt, 'ms', 'gptCooldown:', gptCooldown);
 
     if (timeSinceLastGpt >= gptCooldown) {
-      // GPT呼び出し
+    // GPT呼び出し
       console.log('[flushBuffer] ===== Calling GPT API =====');
       console.log('[flushBuffer] Text length:', text.length, 'Text preview:', text.substring(0, 50) + '...');
       console.log('[flushBuffer] RoomId:', roomId);
@@ -901,7 +901,7 @@ function StreamPage() {
     };
   }, [isStreaming, ensureRecognitionStarted, flushBuffer]);
 
-  // 一定時間応答がない場合の強制応答
+  // 一定時間応答がない場合の強制応答（無音時の話題振り）
   useEffect(() => {
     if (!isStreaming) {
       if (forceResponseTimerRef.current) {
@@ -914,7 +914,7 @@ function StreamPage() {
     const interval = setInterval(() => {
       const now = Date.now();
       const timeSinceLastGptResponse = now - lastGptResponseTimeRef.current;
-      const gptResponseTimeout = GPT_FORCE_RESPONSE_TIMEOUT_MS;
+      const gptResponseTimeout = SILENCE_PROMPT_INTERVAL_MS;
 
       // GPT応答が一定時間ない場合、GPTを呼ぶ（相槌は3秒ごとに自動で送られるので、GPT応答のみをチェック）
       if (timeSinceLastGptResponse >= gptResponseTimeout) {
