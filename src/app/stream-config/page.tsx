@@ -12,16 +12,16 @@ function StreamConfigPage() {
   const router = useRouter();
 
   const backgrounds: BackgroundPreview[] = [
-    { id: 'tsubucafe1', name: '', preview: '/backgrounds/background (1).jpg' },
-    { id: 'tsubucafe2', name: '', preview: '/backgrounds/background (2).jpg' },
-    { id: 'tsubucafe3', name: '', preview: '/backgrounds/background (3).jpg' },
-    { id: 'tsubucafe4', name: '', preview: '/backgrounds/background (4).jpg' },
-    { id: 'tsubucafe5', name: '', preview: '/backgrounds/background (5).jpg' },
-    { id: 'tsubucafe6', name: '', preview: '/backgrounds/background (6).jpg' },
-    { id: 'tsubucafe7', name: '', preview: '/backgrounds/background (7).jpg' },
-    { id: 'tsubucafe8', name: '', preview: '/backgrounds/background (8).jpg' },
-    { id: 'tsubucafe9', name: '', preview: '/backgrounds/background (9).jpg' },
-    { id: 'tsubucafe10', name: '', preview: '/backgrounds/background (10).jpg' }
+    { id: 'tsubucafe1', name: 'おこたでみかん', preview: '/backgrounds/background (1).jpg' },
+    { id: 'tsubucafe2', name: '春のお散歩', preview: '/backgrounds/background (2).jpg' },
+    { id: 'tsubucafe3', name: 'あたたかなお昼寝', preview: '/backgrounds/background (3).jpg' },
+    { id: 'tsubucafe4', name: 'ご飯を作ろう', preview: '/backgrounds/background (4).jpg' },
+    { id: 'tsubucafe5', name: '綺麗な夜空', preview: '/backgrounds/background (5).jpg' },
+    { id: 'tsubucafe6', name: '街をお散歩', preview: '/backgrounds/background (6).jpg' },
+    { id: 'tsubucafe7', name: '雪遊び', preview: '/backgrounds/background (7).jpg' },
+    { id: 'tsubucafe8', name: '楽しい月夜', preview: '/backgrounds/background (8).jpg' },
+    { id: 'tsubucafe9', name: 'パジャマパーティー', preview: '/backgrounds/background (9).jpg' },
+    { id: 'tsubucafe10', name: '風船と飛ぼう', preview: '/backgrounds/background (10).jpg' }
   ];
 
   const handleNext = () => {
@@ -93,17 +93,24 @@ function StreamConfigPage() {
                     <button
                       key={bg.id}
                       onClick={() => setBackgroundImage(bg.id)}
-                      className={`rounded-lg border-2 transition aspect-square overflow-hidden ${
-                        backgroundImage === bg.id
-                          ? 'border-gray-900'
-                          : 'border-gray-300'
-                      }`}
+                      className="transition text-center"
                     >
-                      <img 
-                        src={bg.preview} 
-                        alt={bg.id}
-                        className="w-full h-full object-cover"
-                      />
+                      <div
+                        className={`rounded-lg border-2 overflow-hidden aspect-square ${
+                          backgroundImage === bg.id
+                            ? 'border-gray-900'
+                            : 'border-gray-300'
+                        }`}
+                      >
+                        <img 
+                          src={bg.preview} 
+                          alt={bg.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="mt-1 text-[10px] sm:text-xs leading-tight text-[#008b8b] font-bold">
+                        {bg.name}
+                      </div>
                     </button>
                   ))}
                 </div>
